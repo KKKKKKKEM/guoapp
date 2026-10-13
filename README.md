@@ -188,7 +188,7 @@ APK 已核对为非调试发布包，使用项目原发布签名；0.2.87 按用
 
 ### GitHub Actions
 
-**Build app packages** 只在推送 `v*` 版本 Tag 时触发。普通 `main` / `master` 推送、PR 和手动运行不触发出包。Tag 必须是 `v` 加 `pubspec.yaml` 的完整版本号（包含构建号）；例如当前源码 `0.2.88+95` 对应 `v0.2.88+95`。版本不一致会在下载 SDK 和构建之前失败，不会自动修改源码版本号。
+**Build app packages** 在推送 `v*` 版本 Tag 时触发，也支持指定**已存在的版本 Tag** 手动重跑。普通 `main` / `master` 推送和 PR 不触发出包。所有任务均检出 `refs/tags/{版本 Tag}`，手动运行不会改为构建分支最新源码；不存在的 Tag 会在检出阶段失败。Tag 必须是 `v` 加 `pubspec.yaml` 的完整版本号（包含构建号）；例如源码 `0.2.88+95` 对应 `v0.2.88+95`。版本不一致会在下载 SDK 和构建之前失败，不会自动修改源码版本号。
 
 ~~~sh
 git switch main
@@ -196,6 +196,14 @@ git pull --ff-only origin main
 git tag v0.2.88+95
 git push origin v0.2.88+95
 ~~~
+
+已创建 Tag 但未产生运行时，可以在 Actions → Build app packages → Run workflow 中填写 `release_tag`，或执行：
+
+~~~sh
+gh workflow run build.yml --repo KKKKKKKEM/guoapp --ref main -f release_tag=v0.2.88+95
+~~~
+
+同一版本 Tag 的自动触发与手动重跑使用相同并发组，后一次运行替代前一次运行；不移动已有 Tag。
 
 发布下一版时，先递增并提交 `pubspec.yaml` 的版本号 / 构建号及对应的应用构建号，再推送对应 Tag。不要移动已经发布的版本 Tag。
 
@@ -221,7 +229,7 @@ keyAlias=zhenguojian
 keyPassword=你的密码
 ~~~
 
-Tag 触发配置已通过 actionlint；版本校验 CLI 已在实际 `GITHUB_REF_NAME` / `GITHUB_OUTPUT` 环境中运行，正确版本输出通过，错构建号被拒绝且不写入输出，另有三项版本边界回归通过。本次没有推送发布 Tag，没有运行 GitHub 托管构建或生成新安装包。
+Tag 配置与按已有 Tag 重跑入口均已通过 actionlint；版本校验 CLI 已在实际 `GITHUB_REF_NAME` / `GITHUB_OUTPUT` 环境中运行，正确版本输出通过，错构建号被拒绝且不写入输出。在 `GITHUB_REF_NAME=main` 下显式传入 `v0.2.88+95` 的校验也通过，另有三项版本边界回归通过。已创建 `v0.2.88+95`；运行、构建产物和设备验收是不同状态，不能将启动工作流等同于安装包构建成功。
 
 ## 开发与构建
 

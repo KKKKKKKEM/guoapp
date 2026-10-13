@@ -1,15 +1,21 @@
 name: Build app packages
-run-name: Build ${{ github.ref_name }}
+run-name: Build ${{ inputs.release_tag || github.ref_name }}
 
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Existing version Tag, for example v0.2.88+95'
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: app-build-${{ github.workflow }}-${{ github.ref }}
+  group: app-build-${{ github.workflow }}-${{ inputs.release_tag || github.ref_name }}
   cancel-in-progress: true
 
 env:
@@ -25,9 +31,13 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ inputs.release_tag || github.ref_name }}
       - name: Validate version tag
         id: version
-        run: python3 scripts/release_tag.py
+        run: python3 scripts/release_tag.py --tag "$RELEASE_TAG"
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
 
   checks:
     needs: version
@@ -35,6 +45,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
       - run: python3 -m unittest discover -s scripts -p 'test_*.py'
       - uses: actions/setup-go@v5
         with:
@@ -80,6 +92,8 @@ jobs:
             arguments: '--all-sources'
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -163,6 +177,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: refs/tags/${{ needs.version.outputs.tag }}
       - uses: actions/download-artifact@v4
         with:
           pattern: '*-android'
