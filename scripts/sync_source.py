@@ -55,6 +55,7 @@ REQUIRED_FILES = {
     'android/app/build.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties',
     'windows/CMakeLists.txt', 'windows/flutter/CMakeLists.txt',
     '.github/workflows/build.yml', 'scripts/build_native.py',
+    'scripts/release_tag.py',
 }
 
 

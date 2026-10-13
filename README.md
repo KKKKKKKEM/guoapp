@@ -188,17 +188,29 @@ APK 已核对为非调试发布包，使用项目原发布签名；0.2.87 按用
 
 ### GitHub Actions
 
-推送 `main` / `master`、`v*` 标签、提交 PR，或手动运行 **Build app packages**，会先检查再构建两版（默认与 `--all-sources`）：
+**Build app packages** 只在推送 `v*` 版本 Tag 时触发。普通 `main` / `master` 推送、PR 和手动运行不触发出包。Tag 必须是 `v` 加 `pubspec.yaml` 的完整版本号（包含构建号）；例如当前源码 `0.2.88+95` 对应 `v0.2.88+95`。版本不一致会在下载 SDK 和构建之前失败，不会自动修改源码版本号。
 
-| 产物 | 内容 |
+~~~sh
+git switch main
+git pull --ff-only origin main
+git tag v0.2.88+95
+git push origin v0.2.88+95
+~~~
+
+发布下一版时，先递增并提交 `pubspec.yaml` 的版本号 / 构建号及对应的应用构建号，再推送对应 Tag。不要移动已经发布的版本 Tag。
+
+当前云端构建范围为 **Android**，同时构建默认「红果鉴」与 `--all-sources`「真果鉴」，每版产出 arm64-v8a / armeabi-v7a / x86_64 三种 APK，共六个 APK。此前 Windows / iOS 禁用的空任务已移除；本地构建脚本仍保留，不代表这两个平台已启用云端构建。
+
+| 下载位置 | 内容 |
 | --- | --- |
-| `*-android` | 三种架构 APK 和 SHA256 |
-| `*-windows` | 完整 ZIP 和 SHA256 |
-| `*-ios-unsigned` | 未签名 `.app` ZIP 和 SHA256，不能直接当已签名 IPA 安装 |
+| Actions 的 `hongguojian-android` / `zhenguojian-android` artifacts | 各版三种架构 APK 和 SHA256，保留 14 天 |
+| 对应 `v{完整版本号}` Tag 的 GitHub Release | 六个 APK 与合并后的 `SHA256SUMS.txt` |
 
-推送 `main` 且 android / ios / windows 全部构建成功时，自动创建 / 更新 GitHub Release（tag `app-v{version}`）。发布新版本前需先在 `pubspec.yaml` 提升 `version`，否则会覆盖同名 tag 的 Release。
+版本校验通过且两版 Android 都构建成功后，自动创建 / 更新**触发构建的同一个 Tag** 的 Release，不再额外生成 `app-v...` Tag。重跑同一个 Tag 的工作流会替换同名产物并更新说明，不删除手工添加的其他附件。检查任务按现有开发快照策略独立运行，不作为 Android 出包 / Release 的依赖；构建成功不代表全套回归、源站和设备验收通过。
 
-Android 正式发布使用同一签名并递增构建号，在仓库 Secrets 配置：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。未配置时生成 debug 签名预览包。
+Android 正式发布需在仓库 Settings → Secrets and variables → Actions 配置全部四个 Secrets：`ANDROID_KEYSTORE_BASE64`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。仅配置其中一部分会失败；全部未配置时生成 **debug 签名预览 APK**，对应 Release 标记为 **Pre-release**。发布说明根据实际签名步骤结果生成，不根据证书变量是否存在猜测签名状态；不同构建机生成的 debug 签名可能不同，不能保证覆盖之前的安装包。
+
+可选仓库变量 `ANDROID_CERT_SHA256` 用于正式签名证书指纹比对。Fork 不会自动继承原仓库的 Secrets，本次配置不会上传本地密钥。当前 Fork 未配置签名 Secrets，首次构建默认是预览版。
 
 本地不入库的 `android/key.properties`：
 
@@ -208,6 +220,8 @@ storePassword=你的密码
 keyAlias=zhenguojian
 keyPassword=你的密码
 ~~~
+
+Tag 触发配置已通过 actionlint；版本校验 CLI 已在实际 `GITHUB_REF_NAME` / `GITHUB_OUTPUT` 环境中运行，正确版本输出通过，错构建号被拒绝且不写入输出，另有三项版本边界回归通过。本次没有推送发布 Tag，没有运行 GitHub 托管构建或生成新安装包。
 
 ## 开发与构建
 

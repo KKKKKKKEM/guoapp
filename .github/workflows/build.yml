@@ -1,14 +1,12 @@
 name: Build app packages
+run-name: Build ${{ github.ref_name }}
 
 on:
   push:
-    branches: [main, master]
     tags: ['v*']
-  pull_request:
-  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: app-build-${{ github.workflow }}-${{ github.ref }}
@@ -19,7 +17,20 @@ env:
   GOSUMDB: sum.golang.org
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate version tag
+        id: version
+        run: python3 scripts/release_tag.py
+
   checks:
+    needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -54,8 +65,11 @@ jobs:
         continue-on-error: true
 
   android:
+    needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    outputs:
+      signed: ${{ steps.signing.outputs.release }}
     strategy:
       fail-fast: false
       matrix:
@@ -139,41 +153,10 @@ jobs:
           path: dist/android/*
           if-no-files-found: error
           retention-days: 14
-  windows:
-    if: false
-    needs: checks
-    runs-on: windows-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - edition: hongguojian
-            arguments: ''
-          - edition: zhenguojian
-            arguments: '--all-sources'
-    steps:
-      - uses: actions/checkout@v4
-
-  ios:
-    if: false
-    needs: checks
-    runs-on: macos-latest
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - edition: hongguojian
-            arguments: ''
-          - edition: zhenguojian
-            arguments: '--all-sources'
-    steps:
-      - uses: actions/checkout@v4
 
   release:
-    needs: [android]
-    if: always() && needs.android.result == 'success'
+    needs: [version, android]
+    if: always() && needs.version.result == 'success' && needs.android.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -182,11 +165,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
+          pattern: '*-android'
           path: artifacts
       - name: 生成发布文件清单
+        shell: bash
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)
           mkdir -p release
           for directory in artifacts/*/; do
             for file in "$directory"*; do
@@ -202,48 +186,40 @@ jobs:
           mapfile -t files < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
           sha256sum "${files[@]}" > SHA256SUMS.txt
           cat SHA256SUMS.txt
-      - name: 发布 Release
+      - name: 发布对应 Tag 的 Release
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          APP_VERSION: ${{ needs.version.outputs.version }}
+          APK_SIGNED: ${{ needs.android.outputs.signed }}
+          ANDROID_CERT_SHA256: ${{ vars.ANDROID_CERT_SHA256 }}
         run: |
           set -euo pipefail
-          version=$(sed -n 's/^version:[[:space:]]*//p' pubspec.yaml | head -n1)
-          tag="app-v${version//+/-}"
-          apk_note="Android（已用固定发布证书签名，可覆盖安装升级，无需卸载）："
-          if printf '%s\n' "${{ vars.ANDROID_CERT_SHA256 }}" | grep -q .; then
-            apk_note="Android（已用固定发布证书签名，可覆盖安装升级，无需卸载）："
+          prerelease=false
+          if [ "$APK_SIGNED" = "true" ]; then
+            apk_note="Android（发布签名；覆盖升级仍要求与旧包签名一致）："
           else
-            apk_note="Android（未配置发布签名，当前为 debug 签名，仅供测试，不能覆盖正式版安装）："
+            prerelease=true
+            apk_note="Android（debug 签名预览包，不能覆盖正式版；不同构建的预览签名也可能不同）："
           fi
           {
-            printf '%s\n\n' "版本 ${version}。两个版本功能相同，区别只在站源范围，按需选择："
+            printf '%s\n\n' "版本 ${APP_VERSION}，源码 Tag ${RELEASE_TAG}。按站源范围选择："
             printf '%s\n' "- 红果鉴 hongguojian：仅红果站源"
             printf '%s\n' "- 真果鉴 zhenguojian：全部站源"
             printf '\n%s\n' "$apk_note"
-            printf '%s\n' "- *-arm64-v8a.apk：绝大多数手机选这个"
-            printf '%s\n' "- *-armeabi-v7a.apk：较老的 32 位手机"
-            printf '%s\n' "- *-x86_64.apk：模拟器"
-            printf '\n%s\n' "iOS（未签名，需自行签名后才能安装）："
-            printf '%s\n' "- *-ios-unsigned.ipa：未签名 IPA，用 AltStore / Sideloadly / TrollStore 等工具自签后安装"
-            printf '%s\n' "- *-ios-unsigned-app.zip：未签名 Runner.app 压缩包，供自行签名 / 打包使用"
-            printf '\n%s\n' "Windows（解压后运行 hongguojian.exe 或 zhenguojian.exe）："
-            printf '%s\n' "- *-windows-x64.zip：Windows 10/11 x64 完整包；构建机没有音频和图形设备，播放自检未通过，未做设备验收"
+            printf '%s\n' "- *-arm64-v8a.apk：大多数 Android 手机、电视和盒子"
+            printf '%s\n' "- *-armeabi-v7a.apk：32 位 Android 系统"
+            printf '%s\n' "- *-x86_64.apk：对应设备或模拟器"
             printf '\n%s\n' "校验：SHA256SUMS.txt"
-            if printf '%s\n' "${{ vars.ANDROID_CERT_SHA256 }}" | grep -q .; then
-              printf '%s\n' "签名证书 SHA-256：${{ vars.ANDROID_CERT_SHA256 }}"
-            else
-              printf '%s\n' "签名证书：未配置（当前为 debug 签名）"
+            if [ "$APK_SIGNED" = "true" ] && [ -n "$ANDROID_CERT_SHA256" ]; then
+              printf '%s\n' "签名证书 SHA-256：${ANDROID_CERT_SHA256}"
             fi
+            printf '\n%s\n' "本轮只产出 Android 包；构建成功不代表真实站点、播放和设备验收通过。"
           } > notes.md
-          if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" release/* --clobber
-            gh release edit "$tag" --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
-            # 清理上一次构建留下、本轮已不再产出的附件，避免下载到过期文件。
-            for name in $(gh release view "$tag" --json assets --jq '.assets[].name'); do
-              if [ ! -e "release/$name" ]; then
-                gh release delete-asset "$tag" "$name" --yes
-              fi
-            done
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" release/* --clobber
+            gh release edit "$RELEASE_TAG" --title "红果鉴 / 真果鉴 ${APP_VERSION}" --notes-file notes.md --prerelease="$prerelease"
           else
-            gh release create "$tag" release/* --title "红果鉴 / 真果鉴 ${version}" --notes-file notes.md
+            gh release create "$RELEASE_TAG" release/* --verify-tag --title "红果鉴 / 真果鉴 ${APP_VERSION}" --notes-file notes.md --prerelease="$prerelease"
           fi
