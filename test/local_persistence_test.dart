@@ -190,7 +190,12 @@ void main() {
         pin: 'abcdef12',
       );
       await store.setPlaybackPreferences(
-        const PlaybackPreferences(speed: 1.5, quality: 720, autoAdvance: false),
+        const PlaybackPreferences(
+          speed: 1.5,
+          quality: 720,
+          autoAdvance: false,
+          shortDramaMode: true,
+        ),
       );
       await store.saveProfile(
         name: '访客',
@@ -200,14 +205,17 @@ void main() {
       final visitor = store.profiles.firstWhere((profile) => !profile.admin);
       await store.switchProfile(visitor.id);
       expect(store.playbackPreferences.speed, 1);
+      expect(store.playbackPreferences.shortDramaMode, isFalse);
       await store.setPlaybackPreferences(const PlaybackPreferences(speed: .75));
       await store.switchProfile('default', pin: 'abcdef12');
       expect(store.playbackPreferences.speed, 1.5);
+      expect(store.playbackPreferences.shortDramaMode, isTrue);
       final restored = await restart(platform);
       expect(restored.locked, isTrue);
       await restored.switchProfile('default', pin: 'abcdef12');
       expect(restored.favorites.length, 2);
       expect(restored.playbackPreferences.autoAdvance, isFalse);
+      expect(restored.playbackPreferences.shortDramaMode, isTrue);
     },
   );
 

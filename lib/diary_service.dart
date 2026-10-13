@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'app_layout.dart';
 
 /// 应用内「日记」日志服务 — 实时记录播放与系统事件，方便在电视与手机端快速排查问题。
 class DiaryService {
@@ -139,16 +140,12 @@ class DiaryService {
                             lower.contains('404')) {
                           textColor = const Color(0xFFFCC419);
                         }
+                        final style = TextStyle(fontFamily: 'monospace', fontSize: 12, color: textColor);
                         return Padding(
                           padding: const EdgeInsets.symmetric(vertical: 2.0),
-                          child: SelectableText(
-                            item,
-                            style: TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                              color: textColor,
-                            ),
-                          ),
+                          child: AppLayout.isTelevision(context)
+                              ? Text(item, style: style)
+                              : SelectableText(item, style: style),
                         );
                       },
                     ),

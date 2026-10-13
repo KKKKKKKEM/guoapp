@@ -7,6 +7,7 @@ import 'local_store.dart';
 import 'media_library.dart';
 import 'models.dart';
 import 'widgets.dart';
+import 'app_layout.dart';
 
 class MergeQueueScreen extends StatefulWidget {
   const MergeQueueScreen({
@@ -176,123 +177,126 @@ class _MergeQueueScreenState extends State<MergeQueueScreen> {
             ),
           ],
         ),
-        body: !_allowed
-            ? const StatusPanel(title: '当前用户已切换', message: '请返回后重新打开合并队列。')
-            : _loading
-            ? const Center(child: CircularProgressIndicator())
-            : Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (_adding) const LinearProgressIndicator(),
-                  if (_error != null || widget.library.merges.error.isNotEmpty)
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(_error ?? widget.library.merges.error),
-                    ),
-                  Expanded(
-                    child: jobs.isEmpty
-                        ? StatusPanel(
-                            title: '还没有合并任务',
-                            message: '选择多部剧加入队列，依次合并已下载的连续分集。',
-                            secondaryAction: FilledButton.icon(
-                              onPressed: _adding ? null : _add,
-                              icon: const Icon(Icons.add_rounded),
-                              label: const Text('添加剧集'),
-                            ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.all(12),
-                            itemCount: jobs.length,
-                            itemBuilder: (_, index) {
-                              final job = jobs[index];
-                              final processing =
-                                  job.state == 'running' ||
-                                  job.state == 'cleanup';
-                              return Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(16),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      Text(
-                                        job.drama.title,
-                                        style: Theme.of(
-                                          context,
-                                        ).textTheme.titleMedium,
-                                      ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        '第 ${job.episodes.first}–${job.episodes.last} 集 · ${job.label}${job.cleanup ? ' · 完成后清理分集' : ''}',
-                                      ),
-                                      if (processing) ...[
-                                        const SizedBox(height: 10),
-                                        LinearProgressIndicator(
-                                          value: widget.library.progress > 0
-                                              ? widget.library.progress
-                                              : null,
+        body: TelevisionPageBody(
+          child: !_allowed
+              ? const StatusPanel(title: '当前用户已切换', message: '请返回后重新打开合并队列。')
+              : _loading
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (_adding) const LinearProgressIndicator(),
+                    if (_error != null ||
+                        widget.library.merges.error.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Text(_error ?? widget.library.merges.error),
+                      ),
+                    Expanded(
+                      child: jobs.isEmpty
+                          ? StatusPanel(
+                              title: '还没有合并任务',
+                              message: '选择多部剧加入队列，依次合并已下载的连续分集。',
+                              secondaryAction: FilledButton.icon(
+                                onPressed: _adding ? null : _add,
+                                icon: const Icon(Icons.add_rounded),
+                                label: const Text('添加剧集'),
+                              ),
+                            )
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(12),
+                              itemCount: jobs.length,
+                              itemBuilder: (_, index) {
+                                final job = jobs[index];
+                                final processing =
+                                    job.state == 'running' ||
+                                    job.state == 'cleanup';
+                                return Card(
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.stretch,
+                                      children: [
+                                        Text(
+                                          job.drama.title,
+                                          style: Theme.of(
+                                            context,
+                                          ).textTheme.titleMedium,
                                         ),
                                         const SizedBox(height: 6),
-                                        Text(widget.library.status),
-                                      ],
-                                      if (job.error.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            top: 8,
-                                          ),
-                                          child: Text(job.error),
+                                        Text(
+                                          '第 ${job.episodes.first}–${job.episodes.last} 集 · ${job.label}${job.cleanup ? ' · 完成后清理分集' : ''}',
                                         ),
-                                      Wrap(
-                                        spacing: 8,
-                                        children: [
-                                          if (job.active)
-                                            TextButton.icon(
-                                              onPressed: () =>
-                                                  _control(job, 'pause'),
-                                              icon: const Icon(
-                                                Icons.pause_rounded,
-                                              ),
-                                              label: const Text('暂停'),
-                                            ),
-                                          if (job.state == 'paused' ||
-                                              job.state == 'failed')
-                                            TextButton.icon(
-                                              onPressed: () =>
-                                                  _control(job, 'resume'),
-                                              icon: const Icon(
-                                                Icons.play_arrow_rounded,
-                                              ),
-                                              label: Text(
-                                                job.state == 'failed'
-                                                    ? '重试'
-                                                    : '继续',
-                                              ),
-                                            ),
-                                          if (job.state != 'completed' &&
-                                              job.state != 'cancelled')
-                                            TextButton(
-                                              onPressed: () =>
-                                                  _control(job, 'cancel'),
-                                              child: const Text('取消任务'),
-                                            ),
-                                          if (job.state == 'completed' ||
-                                              job.state == 'cancelled')
-                                            TextButton(
-                                              onPressed: () =>
-                                                  _control(job, 'forget'),
-                                              child: const Text('清理记录'),
-                                            ),
+                                        if (processing) ...[
+                                          const SizedBox(height: 10),
+                                          LinearProgressIndicator(
+                                            value: widget.library.progress > 0
+                                                ? widget.library.progress
+                                                : null,
+                                          ),
+                                          const SizedBox(height: 6),
+                                          Text(widget.library.status),
                                         ],
-                                      ),
-                                    ],
+                                        if (job.error.isNotEmpty)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              top: 8,
+                                            ),
+                                            child: Text(job.error),
+                                          ),
+                                        Wrap(
+                                          spacing: 8,
+                                          children: [
+                                            if (job.active)
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _control(job, 'pause'),
+                                                icon: const Icon(
+                                                  Icons.pause_rounded,
+                                                ),
+                                                label: const Text('暂停'),
+                                              ),
+                                            if (job.state == 'paused' ||
+                                                job.state == 'failed')
+                                              TextButton.icon(
+                                                onPressed: () =>
+                                                    _control(job, 'resume'),
+                                                icon: const Icon(
+                                                  Icons.play_arrow_rounded,
+                                                ),
+                                                label: Text(
+                                                  job.state == 'failed'
+                                                      ? '重试'
+                                                      : '继续',
+                                                ),
+                                              ),
+                                            if (job.state != 'completed' &&
+                                                job.state != 'cancelled')
+                                              TextButton(
+                                                onPressed: () =>
+                                                    _control(job, 'cancel'),
+                                                child: const Text('取消任务'),
+                                              ),
+                                            if (job.state == 'completed' ||
+                                                job.state == 'cancelled')
+                                              TextButton(
+                                                onPressed: () =>
+                                                    _control(job, 'forget'),
+                                                child: const Text('清理记录'),
+                                              ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ),
-                              );
-                            },
-                          ),
-                  ),
-                ],
-              ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+        ),
       );
     },
   );

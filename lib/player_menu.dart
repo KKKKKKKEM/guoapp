@@ -162,6 +162,23 @@ class _PlayerMenuState extends State<PlayerMenu> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (all && widget.mobile) ...[
+          SwitchListTile.adaptive(
+            key: const ValueKey('player-short-drama-mode'),
+            contentPadding: EdgeInsets.zero,
+            title: const Text('短剧模式'),
+            subtitle: const Text('默认竖屏全屏；上下滑切集。关闭后左半屏调亮度、右半屏调音量。'),
+            value: preferences.shortDramaMode,
+            onChanged: _busy
+                ? null
+                : (value) => _run(
+                    () => widget.onPreferences(
+                      preferences.copyWith(shortDramaMode: value),
+                    ),
+                  ),
+          ),
+          const SizedBox(height: 8),
+        ],
         if (all || widget.section == PlayerMenuSection.speed) ...[
           const Text('倍速'),
           const SizedBox(height: 8),
@@ -314,8 +331,8 @@ class _PlayerMenuState extends State<PlayerMenu> {
           const SizedBox(height: 20),
           Text(
             widget.mobile
-                ? '上下滑切集；长按画面临时 3 倍速，松开恢复。竖屏轻点暂停，横屏轻点显示控制；双击播放或暂停。'
-                : '空格：播放 / 暂停\n左右键：后退 / 快进 5 秒\n长按右键或画面：临时 3 倍速\n上下键：音量 ±5%，M：静音\nF、F11、Ctrl+F：全屏\nEsc：先关闭菜单，再退出全屏',
+                ? '${preferences.shortDramaMode ? '短剧：上下滑切集，默认竖屏全屏；可在顶栏强制横屏。' : '普通：左半屏上下滑调亮度，右半屏调音量；全屏按视频比例。'}\n左右滑预览进度，松手跳转；长按临时使用当前速度的两倍，松开恢复；轻点显示或隐藏播控，双击播放或暂停。'
+                : '空格：播放 / 暂停\n左右键：后退 / 快进 5 秒\n长按右键或画面：临时使用当前速度的两倍\n上下键：音量 ±5%，M：静音\nF、F11、Ctrl+F：全屏\nEsc：先关闭菜单，再退出全屏',
             style: helperStyle.copyWith(height: 1.6),
           ),
         ],

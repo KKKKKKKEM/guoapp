@@ -20,6 +20,7 @@ import android.net.ConnectivityManager
 import android.net.Uri
 import android.util.Rational
 import android.view.InputDevice
+import android.view.KeyEvent
 import android.view.WindowManager
 import android.provider.Settings
 import io.flutter.embedding.engine.FlutterEngine
@@ -30,6 +31,27 @@ class MainActivity : FlutterActivity() {
     private var thermalHeadroom: Double? = null
     private var deviceChannel: MethodChannel? = null
     private var televisionMode = false
+    private var tvBackPressed = false
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (!televisionMode || event.keyCode != KeyEvent.KEYCODE_BACK || flutterEngine == null) {
+            return super.dispatchKeyEvent(event)
+        }
+        when (event.action) {
+            KeyEvent.ACTION_DOWN -> if (event.repeatCount == 0) tvBackPressed = true
+            KeyEvent.ACTION_UP -> {
+                val navigate = tvBackPressed && !event.isCanceled
+                tvBackPressed = false
+                if (navigate) flutterEngine?.navigationChannel?.popRoute()
+            }
+        }
+        return true
+    }
+
+    override fun onPause() {
+        tvBackPressed = false
+        super.onPause()
+    }
 
     @Suppress("DEPRECATION")
     private fun isTelevisionDevice(): Boolean {

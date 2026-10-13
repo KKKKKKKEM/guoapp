@@ -232,6 +232,15 @@ class DuanjuApp extends StatelessWidget {
       final mode = store?.displayMode ?? 'auto';
       final tv = mode == 'television' || mode == 'auto' && television;
       final theme = Theme.of(context);
+      final media = MediaQuery.of(context);
+      final insets = tv
+          ? EdgeInsets.fromLTRB(
+              media.padding.left > 32 ? media.padding.left : 32,
+              media.padding.top > 20 ? media.padding.top : 20,
+              media.padding.right > 32 ? media.padding.right : 32,
+              media.padding.bottom > 20 ? media.padding.bottom : 20,
+            )
+          : media.padding;
       return AnnotatedRegion<SystemUiOverlayStyle>(
         value: AppTheme.systemBars(theme.brightness),
         child: ColoredBox(
@@ -255,7 +264,10 @@ class DuanjuApp extends StatelessWidget {
                     ): ActivateIntent(),
                     SingleActivator(LogicalKeyboardKey.goBack): DismissIntent(),
                   },
-                  child: FocusTraversalGroup(child: child!),
+                  child: MediaQuery(
+                    data: media.copyWith(padding: insets),
+                    child: FocusTraversalGroup(child: child!),
+                  ),
                 ),
               ),
             ),

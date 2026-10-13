@@ -50,11 +50,10 @@ func (session *nativeStreamSession) servedCount() int {
 	return session.served
 }
 
-// inFlight reports whether the session is currently serving a response.
-func (session *nativeStreamSession) inFlight() bool {
+func (session *nativeStreamSession) expired(now time.Time) bool {
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	return session.inflight > 0
+	return now.Sub(session.lastUsed) > nativeStreamMaxAge && session.inflight == 0
 }
 
 // served reports whether the identified session ever delivered media.
@@ -169,8 +168,9 @@ func (stream *nativeStreamServer) nativeOpen(media providerMedia) (string, strin
 	// 只按空闲时长回收。会话数量由 engine.playbacks 统一约束，并在那里调用
 	// nativeRelease；这里再按数量淘汰会踢掉正在观看、恰好两次分片请求之间
 	// 空闲的会话，播放器随后收到 410。
+	now := time.Now()
 	for id, old := range stream.sessions {
-		if time.Since(old.lastUsed) > nativeStreamMaxAge && !old.inFlight() {
+		if old.expired(now) {
 			old.cancel()
 			delete(stream.sessions, id)
 		}
@@ -359,7 +359,11 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 	stream.mu.Lock()
 	session := stream.sessions[parts[0]]
 	if session != nil {
+		session.mu.Lock()
 		session.lastUsed = time.Now()
+		session.inflight++
+		session.served++
+		session.mu.Unlock()
 	}
 	stream.mu.Unlock()
 	if session == nil {
@@ -367,11 +371,8 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 		http.Error(writer, "播放已结束", http.StatusGone)
 		return
 	}
-	stream.nativeProbe("GET %s range=%q", parts[1], request.Header.Get("Range"))
-	session.mu.Lock()
-	session.inflight++
-	session.served++
-	session.mu.Unlock()
+	started := time.Now()
+	stream.nativeProbe("%s %s at=%s range=%q", request.Method, parts[1], started.Format(time.RFC3339Nano), request.Header.Get("Range"))
 	defer func() {
 		session.mu.Lock()
 		session.inflight--
@@ -430,10 +431,12 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 	}
 	response, err := stream.nativeRequest(upstream)
 	if err != nil {
+		stream.nativeProbe("UPSTREAM %s failed after=%dms error=%T", parts[1], time.Since(started).Milliseconds(), err)
 		http.Error(writer, "读取媒体失败，请重试", http.StatusBadGateway)
 		return
 	}
 	defer response.Body.Close()
+	stream.nativeProbe("UPSTREAM %s status=%d headersMs=%d", parts[1], response.StatusCode, time.Since(started).Milliseconds())
 	if response.StatusCode != http.StatusOK && response.StatusCode != http.StatusPartialContent {
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 64<<10))
 		err := stream.downloader.catalogResponseError(upstream, response, body)
@@ -478,7 +481,7 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 			}
 		}
 	}
-	playlist := strings.Contains(asset.contentType, "mpegurl") || strings.Contains(contentType, "mpegurl") || nativeHLSManifest(finalURL.String()) || len(session.key) > 0
+	playlist := strings.Contains(asset.contentType, "mpegurl") || strings.Contains(contentType, "mpegurl") || nativeHLSManifest(finalURL.String())
 	reader := bufio.NewReader(response.Body)
 	if playlist {
 		rewriteRange = false
@@ -551,8 +554,8 @@ func (stream *nativeStreamServer) nativeServe(writer http.ResponseWriter, reques
 			source = io.LimitReader(reader, rangeEnd-rangeStart+1)
 		}
 		written, copyErr := io.Copy(writer, source)
-		stream.nativeProbe("  -> %d bytes err=%v (upstream %d %q, range=%v)", written, copyErr,
-			response.StatusCode, response.Header.Get("Content-Type"), rewriteRange)
+		stream.nativeProbe("DONE %s bytes=%d totalMs=%d err=%v upstream=%d type=%q rangeRewrite=%v", parts[1], written,
+			time.Since(started).Milliseconds(), copyErr, response.StatusCode, response.Header.Get("Content-Type"), rewriteRange)
 	} else {
 		stream.nativeProbe("  -> %d (head)", response.StatusCode)
 	}

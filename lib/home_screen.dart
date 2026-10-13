@@ -5,7 +5,6 @@ import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
 import 'app_bottom_navigation.dart';
-import 'app_build.dart';
 import 'core_bridge.dart';
 import 'catalog_filters.dart';
 import 'catalog_browser.dart';
@@ -33,6 +32,7 @@ import 'batch_downloads.dart';
 import 'drama_actions.dart';
 import 'library_updater.dart';
 import 'saved_library.dart';
+import 'television_home.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.repository, required this.store});
@@ -46,12 +46,98 @@ class _HomeScreenState extends State<HomeScreen> {
   static const _recommendationCategory = 'app:recommendations';
   final _search = TextEditingController();
   final _scroll = ScrollController();
+  final _tvNavFocus = List.generate(
+    4,
+    (index) => FocusNode(debugLabel: 'tv-nav-$index'),
+  );
+  final _savedSearchFocus = FocusNode(debugLabel: 'saved-search-entry');
+  final _tvHomeFocus = FocusNode(debugLabel: 'tv-nav-home');
+  final _downloadsKey = GlobalKey<DownloadsScreenState>();
+  FocusNode? _ownedDownloadSearchFocus;
+  FocusNode get _downloadSearchFocus => _ownedDownloadSearchFocus ??= FocusNode(
+    debugLabel: 'downloads-search-entry',
+  );
+  FocusScopeNode? _ownedTvBodyFocus;
+  FocusScopeNode? _ownedCatalogHeaderFocus;
+  FocusScopeNode? _ownedCatalogListFocus;
+  bool _tvBodyFocused = false;
+  FocusScopeNode get _tvBodyFocus =>
+      _ownedTvBodyFocus ??= (FocusScopeNode(debugLabel: 'tv-home-content')
+        ..addListener(_tvBodyFocusChanged));
+  FocusScopeNode get _catalogHeaderFocus => _ownedCatalogHeaderFocus ??=
+      FocusScopeNode(debugLabel: 'tv-catalog-filters');
+  FocusScopeNode get _catalogListFocus => _ownedCatalogListFocus ??=
+      FocusScopeNode(debugLabel: 'tv-catalog-results');
+
+  void _tvBodyFocusChanged() {
+    final focused = _ownedTvBodyFocus?.hasFocus ?? false;
+    if (mounted && focused != _tvBodyFocused) {
+      setState(() => _tvBodyFocused = focused);
+    }
+  }
+
+  void _focusTvRegion(FocusScopeNode scope) {
+    if (scope.context == null ||
+        !scope.traversalDescendants.any(
+          (node) => node.canRequestFocus && !node.skipTraversal,
+        )) {
+      return;
+    }
+    final previous = scope.focusedChild;
+    scope.requestFocus();
+    if (previous == null) scope.nextFocus();
+  }
+
+  Widget _tvBody(Widget child) => AppLayout.isTelevision(context)
+      ? FocusScope(node: _tvBodyFocus, child: child)
+      : child;
+
+  Widget _tvCatalogHeader(Widget child) => !AppLayout.isTelevision(context)
+      ? child
+      : Focus(
+          canRequestFocus: false,
+          onKeyEvent: (_, event) {
+            if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+              return KeyEventResult.ignored;
+            }
+            if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              _tvNavFocus[0].requestFocus();
+              return KeyEventResult.handled;
+            }
+            if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+              _focusTvRegion(_catalogListFocus);
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: FocusScope(node: _catalogHeaderFocus, child: child),
+        );
+
+  Widget _tvCatalogResults(Widget child) => !AppLayout.isTelevision(context)
+      ? child
+      : Focus(
+          canRequestFocus: false,
+          onKeyEvent: (_, event) {
+            if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+                event.logicalKey == LogicalKeyboardKey.arrowUp) {
+              _focusTvRegion(_catalogHeaderFocus);
+              return KeyEventResult.handled;
+            }
+            return KeyEventResult.ignored;
+          },
+          child: FocusScope(node: _catalogListFocus, child: child),
+        );
+  bool _tvHome = true;
+  bool _tvFocusedInitially = false;
+  String? _focusedTitle;
+  String _savedFilter = '';
   Timer? _debounce;
   late SourceSite _source;
   bool _allSources = false;
   List<Drama> _items = [];
   bool _loading = true;
   bool _loadingMore = false;
+  bool _openingDrama = false;
   bool _hasMore = true;
   String? _error;
   int _generation = 0;
@@ -412,11 +498,22 @@ class _HomeScreenState extends State<HomeScreen> {
   void _televisionBack() {
     if (_selectionMode) {
       _cancelSelection();
+    } else if (!_tvHome &&
+        _tab == 3 &&
+        (_downloadsKey.currentState?.handleTelevisionBack() ?? false)) {
+      return;
+    } else if (_tvBodyFocused) {
+      (_tvHome ? _tvHomeFocus : _tvNavFocus[_tab]).requestFocus();
     } else if (_tab != 0) {
-      setState(() => _tab = 0);
+      _changeTab(0);
+      _tvNavFocus[0].requestFocus();
     } else if (_search.text.isNotEmpty) {
       _search.clear();
       _searchChanged('');
+      _tvNavFocus[0].requestFocus();
+    } else if (!_tvHome) {
+      setState(() => _tvHome = true);
+      _tvHomeFocus.requestFocus();
     }
   }
 
@@ -445,7 +542,32 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (!AppLayout.isTelevision(context)) {
+      _tvFocusedInitially = false;
+      return;
+    }
+    if (_tvFocusedInitially) return;
+    _tvFocusedInitially = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && (ModalRoute.of(context)?.isCurrent ?? true)) {
+        (_tvHome ? _tvHomeFocus : _tvNavFocus[_tab]).requestFocus();
+      }
+    });
+  }
+
+  @override
   void dispose() {
+    for (final node in _tvNavFocus) {
+      node.dispose();
+    }
+    _tvHomeFocus.dispose();
+    _savedSearchFocus.dispose();
+    _ownedDownloadSearchFocus?.dispose();
+    _ownedTvBodyFocus?.dispose();
+    _ownedCatalogHeaderFocus?.dispose();
+    _ownedCatalogListFocus?.dispose();
     _updater.removeListener(_updateChanged);
     _updater.dispose();
     _cacheRefreshTimer?.cancel();
@@ -609,6 +731,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _submitSearch(String query) {
+    _tvHome = false;
     if (_showRecommendations) {
       _showRecommendations = false;
       _categorySelections[_group.id] = '';
@@ -643,33 +766,45 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  void _openDrama(Drama drama, {bool resume = false, bool download = false}) {
-    _pauseCatalog();
-    if (download) {
-      Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => DetailScreen(
-            drama: drama,
-            repository: widget.repository,
-            store: widget.store,
-            downloadOnOpen: true,
+  Future<void> _openDrama(
+    Drama drama, {
+    bool resume = false,
+    bool download = false,
+    FocusNode? returnFocus,
+  }) async {
+    if (_openingDrama) return;
+    _openingDrama = true;
+    try {
+      _pauseCatalog();
+      if (download) {
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => DetailScreen(
+              drama: drama,
+              repository: widget.repository,
+              store: widget.store,
+              downloadOnOpen: true,
+            ),
           ),
-        ),
-      );
-      return;
+        );
+      } else {
+        await openPlaybackDirectly(
+          context,
+          drama: drama,
+          repository: widget.repository,
+          store: widget.store,
+        );
+      }
+    } finally {
+      _openingDrama = false;
+      if (mounted && returnFocus?.context != null) returnFocus!.requestFocus();
     }
-    unawaited(
-      openPlaybackDirectly(
-        context,
-        drama: drama,
-        repository: widget.repository,
-        store: widget.store,
-      ),
-    );
   }
 
   void _changeTab(int tab) => setState(() {
+    _tvHome = false;
     _tab = tab;
+    _savedFilter = '';
     _selectionMode = false;
     _selectedDramas.clear();
   });
@@ -738,6 +873,7 @@ class _HomeScreenState extends State<HomeScreen> {
     context,
     drama: drama,
     store: widget.store,
+    repository: widget.repository,
     onContinue: () => _openDrama(drama, resume: true),
     onDownload: widget.repository.supportsDownloads && widget.store.canDownload
         ? () => _openDrama(drama, download: true)
@@ -760,8 +896,15 @@ class _HomeScreenState extends State<HomeScreen> {
       drama: drama,
       repository: widget.repository,
       focusNode: focusNode,
-      onFocus: onFocus,
-      onTap: () => _selectionMode ? _selectDrama(drama) : _openDrama(drama),
+      onFocus: () {
+        onFocus?.call();
+        if (AppLayout.isTelevision(context)) {
+          setState(() => _focusedTitle = drama.title);
+        }
+      },
+      onTap: () => _selectionMode
+          ? _selectDrama(drama)
+          : _openDrama(drama, returnFocus: focusNode),
       onLongPress: canSelect ? () => _selectDrama(drama) : null,
       onMore: () => _dramaActions(drama),
       actions: DramaActionButton(
@@ -810,6 +953,131 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _homeTitle() =>
+      _tab == 0 && (!AppLayout.isTelevision(context) || !_tvHome)
+      ? PopupMenuButton<SourceGroup>(
+          key: const ValueKey('source-switch'),
+          tooltip: '切换站源',
+          enabled: _sourceGroups.length > 1,
+          onSelected: _changeGroup,
+          itemBuilder: (_) => [
+            for (final group in _sourceGroups)
+              PopupMenuItem(
+                value: group,
+                child: Row(
+                  children: [
+                    Expanded(child: Text(group.name)),
+                    if (group.id == _group.id)
+                      const Icon(Icons.check_rounded, size: 20),
+                  ],
+                ),
+              ),
+          ],
+          child: SizedBox(
+            height: 48,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    _group.name,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                if (_sourceGroups.length > 1)
+                  const Icon(Icons.expand_more_rounded),
+              ],
+            ),
+          ),
+        )
+      : const Text(appName);
+
+  Widget _tvNavigation() => Focus(
+    canRequestFocus: false,
+    onKeyEvent: (_, event) {
+      if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+          event.logicalKey == LogicalKeyboardKey.arrowDown &&
+          !_tvHome &&
+          (_tab == 1 || _tab == 2)) {
+        _savedSearchFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+      if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+          event.logicalKey == LogicalKeyboardKey.arrowDown &&
+          !_tvHome &&
+          _tab == 0) {
+        _focusTvRegion(_catalogHeaderFocus);
+        return KeyEventResult.handled;
+      }
+      if ((event is KeyDownEvent || event is KeyRepeatEvent) &&
+          event.logicalKey == LogicalKeyboardKey.arrowDown &&
+          !_tvHome &&
+          _tab == 3) {
+        _downloadSearchFocus.requestFocus();
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    },
+    child: SingleChildScrollView(
+      key: const ValueKey('tv-top-navigation'),
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          for (final entry in [
+            (-1, '首页'),
+            (0, '发现'),
+            (1, '追剧'),
+            (2, '最近观看'),
+            if (widget.store.canDownload) (3, '下载'),
+          ])
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: RemoteTarget(
+                key: ValueKey(
+                  entry.$1 < 0 ? 'tv-nav-home' : 'tv-nav-${entry.$1}',
+                ),
+                label: entry.$2,
+                focusNode: entry.$1 < 0 ? _tvHomeFocus : _tvNavFocus[entry.$1],
+                autofocus: entry.$1 < 0,
+                onPressed: () {
+                  if (entry.$1 < 0) {
+                    setState(() {
+                      _tvHome = true;
+                      _selectionMode = false;
+                      _selectedDramas.clear();
+                    });
+                  } else {
+                    _onNavSelected(entry.$1);
+                  }
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(entry.$2, style: const TextStyle(fontSize: 19)),
+                      const SizedBox(height: 4),
+                      Container(
+                        height: 3,
+                        width: 24,
+                        color: (_tvHome ? entry.$1 < 0 : _tab == entry.$1)
+                            ? Theme.of(context).colorScheme.primary
+                            : Colors.transparent,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    ),
+  );
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: widget.store,
@@ -819,7 +1087,7 @@ class _HomeScreenState extends State<HomeScreen> {
         final desktop = constraints.maxWidth >= 840;
         final scaffold = Scaffold(
           appBar: AppBar(
-            toolbarHeight: television ? 64 : null,
+            toolbarHeight: television ? 72 : null,
             titleSpacing: 12,
             title: _selectionMode
                 ? const Text(
@@ -827,46 +1095,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   )
-                : _tab == 0
-                ? PopupMenuButton<SourceGroup>(
-                    key: const ValueKey('source-switch'),
-                    tooltip: '切换站源',
-                    enabled: _sourceGroups.length > 1,
-                    onSelected: _changeGroup,
-                    itemBuilder: (_) => [
-                      for (final group in _sourceGroups)
-                        PopupMenuItem(
-                          value: group,
-                          child: Row(
-                            children: [
-                              Expanded(child: Text(group.name)),
-                              if (group.id == _group.id)
-                                const Icon(Icons.check_rounded, size: 20),
-                            ],
-                          ),
-                        ),
+                : television
+                ? Row(
+                    children: [
+                      SizedBox(width: 104, child: _homeTitle()),
+                      const SizedBox(width: 8),
+                      Expanded(child: _tvNavigation()),
                     ],
-                    child: SizedBox(
-                      height: 48,
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              _group.name,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                          if (_sourceGroups.length > 1)
-                            const Icon(Icons.expand_more_rounded),
-                        ],
-                      ),
-                    ),
                   )
-                : const Text(appName),
+                : _homeTitle(),
             actions: [
               if (_selectionMode) ...[
                 TextButton(
@@ -882,6 +1119,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: const Text('取消'),
                 ),
               ] else ...[
+                if (television)
+                  RemoteButton(
+                    key: const ValueKey('toggle-search'),
+                    label: '搜索',
+                    icon: Icons.search_rounded,
+                    onPressed: _toggleSearch,
+                  ),
                 if (_tab == 1)
                   IconButton(
                     key: const ValueKey('follow-lan-sync'),
@@ -890,7 +1134,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     icon: const Icon(Icons.sync_rounded),
                   ),
                 if (_tab == 0) ...[
-                  if (!_showRecommendations)
+                  if (!_showRecommendations && !television)
                     IconButton(
                       tooltip: '排序与筛选 · ${widget.store.catalogView.sort.label}',
                       onPressed: _chooseCatalogView,
@@ -901,15 +1145,17 @@ class _HomeScreenState extends State<HomeScreen> {
                           : null,
                       icon: const Icon(Icons.sort_rounded),
                     ),
-                  IconButton(
-                    key: const ValueKey('open-rankings'),
-                    tooltip: '榜单',
-                    onPressed: widget.store.sources.isEmpty
-                        ? null
-                        : _openRankings,
-                    icon: const Icon(Icons.leaderboard_outlined),
-                  ),
-                  if (!_showRecommendations &&
+                  if (!television)
+                    IconButton(
+                      key: const ValueKey('open-rankings'),
+                      tooltip: '榜单',
+                      onPressed: widget.store.sources.isEmpty
+                          ? null
+                          : _openRankings,
+                      icon: const Icon(Icons.leaderboard_outlined),
+                    ),
+                  if (!television &&
+                      !_showRecommendations &&
                       widget.store.canDownload &&
                       widget.repository.supportsDownloads)
                     IconButton(
@@ -918,18 +1164,20 @@ class _HomeScreenState extends State<HomeScreen> {
                       onPressed: () => setState(() => _selectionMode = true),
                       icon: const Icon(Icons.checklist_rounded),
                     ),
-                  IconButton(
-                    key: const ValueKey('toggle-search'),
-                    tooltip: _searchVisible ? '收起搜索' : '搜索',
-                    icon: Icon(
-                      _searchVisible
-                          ? Icons.search_off_rounded
-                          : Icons.search_rounded,
+                  if (!television)
+                    IconButton(
+                      key: const ValueKey('toggle-search'),
+                      tooltip: _searchVisible ? '收起搜索' : '搜索',
+                      icon: Icon(
+                        _searchVisible
+                            ? Icons.search_off_rounded
+                            : Icons.search_rounded,
+                      ),
+                      onPressed: _toggleSearch,
                     ),
-                    onPressed: _toggleSearch,
-                  ),
                 ],
-                if (_tab == 0 &&
+                if (!television &&
+                    _tab == 0 &&
                     !_showRecommendations &&
                     constraints.maxWidth >= 400)
                   RefreshAction(
@@ -949,7 +1197,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 PopupMenuButton<String>(
                   tooltip: '更多',
                   onSelected: (value) {
-                    if (value == 'update') {
+                    if (value == 'sort') {
+                      _chooseCatalogView();
+                    } else if (value == 'rankings') {
+                      _openRankings();
+                    } else if (value == 'select') {
+                      setState(() {
+                        _tvHome = false;
+                        _tab = 0;
+                        _selectionMode = true;
+                      });
+                    } else if (value == 'update') {
                       _refreshCatalog();
                     } else if (value == 'sources') {
                       _manageSources();
@@ -989,9 +1247,27 @@ class _HomeScreenState extends State<HomeScreen> {
                     }
                   },
                   itemBuilder: (_) => [
+                    if (television) ...[
+                      if (!_tvHome && _tab == 0 && !_showRecommendations)
+                        const PopupMenuItem(
+                          value: 'sort',
+                          child: Text('排序与筛选'),
+                        ),
+                      PopupMenuItem(
+                        value: 'rankings',
+                        enabled: widget.store.sources.isNotEmpty,
+                        child: const Text('榜单'),
+                      ),
+                      if (widget.store.canDownload &&
+                          widget.repository.supportsDownloads)
+                        const PopupMenuItem(
+                          value: 'select',
+                          child: Text('多选下载'),
+                        ),
+                    ],
                     if (_tab == 0 &&
                         !_showRecommendations &&
-                        constraints.maxWidth < 400)
+                        (television || constraints.maxWidth < 400))
                       PopupMenuItem(
                         value: 'update',
                         enabled:
@@ -1022,102 +1298,109 @@ class _HomeScreenState extends State<HomeScreen> {
               const SizedBox(width: 8),
             ],
           ),
-          body: SafeArea(
-            top: false,
-            child: Row(
-              children: [
-                if (television) ...[
-                  SizedBox(
-                    width: 164,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(8, 24, 8, 12),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (final entry in [
-                            (Icons.explore_rounded, '发现'),
-                            (Icons.bookmark_rounded, '追剧'),
-                            (Icons.history_rounded, '最近观看'),
-                            if (widget.store.canDownload)
-                              (Icons.download_rounded, '下载'),
-                          ].indexed)
-                            Padding(
-                              padding: const EdgeInsets.only(bottom: 14),
-                              child: RemoteButton(
-                                key: ValueKey('tv-nav-${entry.$1}'),
-                                label: entry.$2.$2,
-                                icon: entry.$2.$1,
-                                selected: _tab == entry.$1,
-                                autofocus: entry.$1 == 0,
-                                onPressed: () => _onNavSelected(entry.$1),
-                              ),
+          body: TelevisionPageBody(
+            initialFocus: false,
+            child: SafeArea(
+              top: false,
+              child: _tvBody(
+                Row(
+                  children: [
+                    if (!television && desktop) ...[
+                      NavigationRail(
+                        selectedIndex: _tab,
+                        onDestinationSelected: _onNavSelected,
+                        labelType: NavigationRailLabelType.all,
+                        groupAlignment: -.8,
+                        destinations: [
+                          NavigationRailDestination(
+                            icon: Icon(Icons.explore_outlined),
+                            selectedIcon: Icon(Icons.explore),
+                            label: Text('发现'),
+                          ),
+                          NavigationRailDestination(
+                            icon: Icon(Icons.bookmark_border_rounded),
+                            selectedIcon: Icon(Icons.bookmark_rounded),
+                            label: Text('追剧'),
+                          ),
+                          NavigationRailDestination(
+                            icon: Icon(Icons.history_rounded),
+                            label: Text('最近观看'),
+                          ),
+                          if (widget.store.canDownload)
+                            NavigationRailDestination(
+                              icon: Icon(Icons.download_outlined),
+                              selectedIcon: Icon(Icons.download_rounded),
+                              label: Text('下载'),
                             ),
                         ],
                       ),
-                    ),
-                  ),
-                  const VerticalDivider(width: 1),
-                ] else if (desktop) ...[
-                  NavigationRail(
-                    selectedIndex: _tab,
-                    onDestinationSelected: _onNavSelected,
-                    labelType: NavigationRailLabelType.all,
-                    groupAlignment: -.8,
-                    destinations: [
-                      NavigationRailDestination(
-                        icon: Icon(Icons.explore_outlined),
-                        selectedIcon: Icon(Icons.explore),
-                        label: Text('发现'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.bookmark_border_rounded),
-                        selectedIcon: Icon(Icons.bookmark_rounded),
-                        label: Text('追剧'),
-                      ),
-                      NavigationRailDestination(
-                        icon: Icon(Icons.history_rounded),
-                        label: Text('最近观看'),
-                      ),
-                      if (widget.store.canDownload)
-                        NavigationRailDestination(
-                          icon: Icon(Icons.download_outlined),
-                          selectedIcon: Icon(Icons.download_rounded),
-                          label: Text('下载'),
-                        ),
+                      const VerticalDivider(width: 1, thickness: 1),
                     ],
-                  ),
-                  const VerticalDivider(width: 1, thickness: 1),
-                ],
-                Expanded(
-                  child: _tab == 0
-                      ? widget.store.sources.isEmpty
-                            ? const StatusPanel(
-                                title: '暂无可用站源',
-                                message: '请联系管理员为当前用户开放站源。',
-                              )
-                            : _catalog(selectionInBody: desktop || television)
-                      : _tab == 3
-                      ? DownloadsScreen(
-                          repository: widget.repository,
-                          store: widget.store,
-                          embedded: true,
-                        )
-                      : SavedLibrary(
-                          key: ValueKey('saved-tab-$_tab'),
-                          repository: widget.repository,
-                          store: widget.store,
-                          history: _tab == 2,
-                          onOpen: _openDrama,
-                          onContinue: (drama) =>
-                              _openDrama(drama, resume: true),
-                          onDownload:
-                              widget.repository.supportsDownloads &&
-                                  widget.store.canDownload
-                              ? (drama) => _openDrama(drama, download: true)
-                              : null,
-                        ),
+                    Expanded(
+                      child: television && _tvHome && !_selectionMode
+                          ? TelevisionHome(
+                              repository: widget.repository,
+                              store: widget.store,
+                              onOpen: (drama, node) =>
+                                  _openDrama(drama, returnFocus: node),
+                              onMore: _dramaActions,
+                              onDiscover: () => _changeTab(0),
+                              onHistory: () => _changeTab(2),
+                              onFollowing: () => _changeTab(1),
+                              onUpdates: () => setState(() {
+                                _tvHome = false;
+                                _tab = 1;
+                                _savedFilter = 'updates';
+                              }),
+                              onTop: _tvHomeFocus.requestFocus,
+                            )
+                          : _tab == 0
+                          ? widget.store.sources.isEmpty
+                                ? const StatusPanel(
+                                    title: '暂无可用站源',
+                                    message: '请联系管理员为当前用户开放站源。',
+                                  )
+                                : _catalog(
+                                    selectionInBody: desktop || television,
+                                  )
+                          : _tab == 3
+                          ? DownloadsScreen(
+                              key: _downloadsKey,
+                              searchFocusNode: television
+                                  ? _downloadSearchFocus
+                                  : null,
+                              onSearchUp: television
+                                  ? () => _tvNavFocus[3].requestFocus()
+                                  : null,
+                              repository: widget.repository,
+                              store: widget.store,
+                              embedded: true,
+                            )
+                          : SavedLibrary(
+                              key: ValueKey('saved-tab-$_tab-$_savedFilter'),
+                              repository: widget.repository,
+                              store: widget.store,
+                              history: _tab == 2,
+                              initialFilter: _savedFilter,
+                              searchFocusNode: television
+                                  ? _savedSearchFocus
+                                  : null,
+                              onSearchUp: television
+                                  ? () => _tvNavFocus[_tab].requestFocus()
+                                  : null,
+                              onOpen: _openDrama,
+                              onContinue: (drama) =>
+                                  _openDrama(drama, resume: true),
+                              onDownload:
+                                  widget.repository.supportsDownloads &&
+                                      widget.store.canDownload
+                                  ? (drama) => _openDrama(drama, download: true)
+                                  : null,
+                            ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
           bottomNavigationBar: desktop || television
@@ -1154,16 +1437,21 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!television && !_selectionMode) return scaffold;
         return PopScope(
           canPop:
-              !_selectionMode &&
-              (!television || _tab == 0 && _search.text.isEmpty),
+              !_selectionMode && (!television || _tvHome && !_tvBodyFocused),
           onPopInvokedWithResult: (didPop, result) {
             if (!didPop) _televisionBack();
           },
           child: CallbackShortcuts(
             bindings: {
-              const SingleActivator(LogicalKeyboardKey.escape): () =>
+              const SingleActivator(
+                LogicalKeyboardKey.escape,
+                includeRepeats: false,
+              ): () =>
                   Navigator.of(context).maybePop(),
-              const SingleActivator(LogicalKeyboardKey.goBack): () =>
+              const SingleActivator(
+                LogicalKeyboardKey.goBack,
+                includeRepeats: false,
+              ): () =>
                   Navigator.of(context).maybePop(),
             },
             child: scaffold,
@@ -1231,36 +1519,40 @@ class _HomeScreenState extends State<HomeScreen> {
               ],
             ),
           ),
-        CatalogFilters(
-          key: ValueKey('filters-${_group.id}'),
-          categories: _displayCategories,
-          category: _displayCategory,
-          error: _categoriesError,
-          onCategory: _changeCategory,
-          onRetry: () => _loadCategories(force: true),
-          trailing: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_supportsVipFilter)
-                IconButton(
-                  tooltip: widget.store.hideVip ? 'VIP：隐藏' : 'VIP：显示',
-                  onPressed: () => saveUserChange(
-                    context,
-                    () => widget.store.setHideVip(!widget.store.hideVip),
+        _tvCatalogHeader(
+          CatalogFilters(
+            key: ValueKey('filters-${_group.id}'),
+            categories: _displayCategories,
+            category: _displayCategory,
+            error: _categoriesError,
+            onCategory: _changeCategory,
+            onRetry: () => _loadCategories(force: true),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_supportsVipFilter)
+                  IconButton(
+                    tooltip: widget.store.hideVip ? 'VIP：隐藏' : 'VIP：显示',
+                    onPressed: () => saveUserChange(
+                      context,
+                      () => widget.store.setHideVip(!widget.store.hideVip),
+                    ),
+                    icon: VipIcon(hidden: widget.store.hideVip),
                   ),
-                  icon: VipIcon(hidden: widget.store.hideVip),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
         if (_showRecommendations)
           Expanded(
-            child: GestureDetector(
-              onHorizontalDragEnd: television ? null : _swipeCategory,
-              child: RecommendationsScreen(
-                repository: widget.repository,
-                store: widget.store,
-                embedded: true,
+            child: _tvCatalogResults(
+              GestureDetector(
+                onHorizontalDragEnd: television ? null : _swipeCategory,
+                child: RecommendationsScreen(
+                  repository: widget.repository,
+                  store: widget.store,
+                  embedded: true,
+                ),
               ),
             ),
           )
@@ -1268,141 +1560,164 @@ class _HomeScreenState extends State<HomeScreen> {
           if (_loading && _items.isNotEmpty)
             const LinearProgressIndicator(minHeight: 2),
           Expanded(
-            child: GestureDetector(
-              onHorizontalDragEnd: television ? null : _swipeCategory,
-              child: _loading && _items.isEmpty
-                  ? const Center(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          CircularProgressIndicator(),
-                          SizedBox(height: 18),
-                          Text('正在加载剧集'),
-                        ],
-                      ),
-                    )
-                  : _items.isEmpty && _error != null
-                  ? StatusPanel(
-                      title: '暂时无法加载',
-                      message: _error!,
-                      onRetry: () => _load(force: true),
-                      secondaryAction:
-                          widget.repository.supportsSourceManagement
-                          ? TextButton(
-                              onPressed: _manageSources,
-                              child: const Text('站源诊断'),
-                            )
-                          : null,
-                      icon: Icons.wifi_off_rounded,
-                    )
-                  : items.isEmpty
-                  ? StatusPanel(
-                      title: '没有找到匹配的短剧',
-                      message: _hideVip
-                          ? '可以换个搜索词，或显示 VIP 内容。'
-                          : widget.store.sources.length > 1
-                          ? '可以换个搜索词或切换站源。'
-                          : '可以换个搜索词，或刷新后重试。',
-                      onRetry:
-                          _hasMore &&
-                              !_loadingMore &&
-                              (!_onlineSearch ||
-                                  _search.text.isEmpty ||
-                                  _group.sources.any(
-                                    (source) => source.pagedSearch,
-                                  ))
-                          ? () => _load(more: true)
-                          : null,
-                      action: '加载更多',
-                    )
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        if (television) {
-                          return _televisionGrid(
-                            items,
-                            constraints.maxWidth,
-                            key:
-                                'catalog-${_group.id}-$_category-$_submittedQuery',
-                            controller: _scroll,
-                            footer: Padding(
-                              padding: const EdgeInsets.fromLTRB(18, 0, 18, 24),
-                              child: Center(
-                                child: _loadingMore
-                                    ? const CircularProgressIndicator()
-                                    : _hasMore
-                                    ? RemoteButton(
-                                        label: '加载更多',
-                                        icon: Icons.expand_more,
-                                        onPressed: () => _load(more: true),
-                                      )
-                                    : const Text('已经看到这里的全部剧集'),
+            child: _tvCatalogResults(
+              GestureDetector(
+                onHorizontalDragEnd: television ? null : _swipeCategory,
+                child: _loading && _items.isEmpty
+                    ? const Center(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 18),
+                            Text('正在加载剧集'),
+                          ],
+                        ),
+                      )
+                    : _items.isEmpty && _error != null
+                    ? StatusPanel(
+                        title: '暂时无法加载',
+                        message: _error!,
+                        onRetry: () => _load(force: true),
+                        secondaryAction:
+                            widget.repository.supportsSourceManagement
+                            ? TextButton(
+                                onPressed: _manageSources,
+                                child: const Text('站源诊断'),
+                              )
+                            : null,
+                        icon: Icons.wifi_off_rounded,
+                      )
+                    : items.isEmpty
+                    ? StatusPanel(
+                        title: '没有找到匹配的短剧',
+                        message: _hideVip
+                            ? '可以换个搜索词，或显示 VIP 内容。'
+                            : widget.store.sources.length > 1
+                            ? '可以换个搜索词或切换站源。'
+                            : '可以换个搜索词，或刷新后重试。',
+                        onRetry:
+                            _hasMore &&
+                                !_loadingMore &&
+                                (!_onlineSearch ||
+                                    _search.text.isEmpty ||
+                                    _group.sources.any(
+                                      (source) => source.pagedSearch,
+                                    ))
+                            ? () => _load(more: true)
+                            : null,
+                        action: '加载更多',
+                      )
+                    : LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (television) {
+                            return _televisionGrid(
+                              items,
+                              constraints.maxWidth,
+                              key:
+                                  'catalog-${_group.id}-$_category-$_submittedQuery',
+                              controller: _scroll,
+                              footer: Padding(
+                                padding: const EdgeInsets.fromLTRB(
+                                  18,
+                                  0,
+                                  18,
+                                  24,
+                                ),
+                                child: Center(
+                                  child: _loadingMore
+                                      ? const CircularProgressIndicator()
+                                      : _hasMore
+                                      ? RemoteButton(
+                                          label: '加载更多',
+                                          icon: Icons.expand_more,
+                                          onPressed: () => _load(more: true),
+                                        )
+                                      : const Text('已经看到这里的全部剧集'),
+                                ),
                               ),
+                            );
+                          }
+                          final padding = constraints.maxWidth < 600
+                              ? 16.0
+                              : 24.0;
+                          return RefreshIndicator(
+                            onRefresh: _refreshCatalog,
+                            child: CustomScrollView(
+                              controller: _scroll,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              slivers: [
+                                SliverPadding(
+                                  padding: EdgeInsets.fromLTRB(
+                                    padding,
+                                    0,
+                                    padding,
+                                    16,
+                                  ),
+                                  sliver: SliverGrid(
+                                    gridDelegate: dramaGridDelegate(
+                                      context,
+                                      constraints.maxWidth - 2 * padding,
+                                    ),
+                                    delegate: SliverChildBuilderDelegate(
+                                      (_, index) => _catalogTile(items[index]),
+                                      childCount: items.length,
+                                    ),
+                                  ),
+                                ),
+                                SliverToBoxAdapter(
+                                  child: Padding(
+                                    padding: const EdgeInsets.only(bottom: 24),
+                                    child: Center(
+                                      child: _loadingMore
+                                          ? const CircularProgressIndicator()
+                                          : _hasMore
+                                          ? OutlinedButton.icon(
+                                              onPressed: () =>
+                                                  _load(more: true),
+                                              icon: const Icon(
+                                                Icons.expand_more_rounded,
+                                              ),
+                                              label: const Text('加载更多'),
+                                            )
+                                          : Text(
+                                              '已经看到这里的全部剧集',
+                                              style: TextStyle(
+                                                color: Theme.of(
+                                                  context,
+                                                ).colorScheme.onSurfaceVariant,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           );
-                        }
-                        final padding = constraints.maxWidth < 600
-                            ? 16.0
-                            : 24.0;
-                        return RefreshIndicator(
-                          onRefresh: _refreshCatalog,
-                          child: CustomScrollView(
-                            controller: _scroll,
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            slivers: [
-                              SliverPadding(
-                                padding: EdgeInsets.fromLTRB(
-                                  padding,
-                                  0,
-                                  padding,
-                                  16,
-                                ),
-                                sliver: SliverGrid(
-                                  gridDelegate: dramaGridDelegate(
-                                    context,
-                                    constraints.maxWidth - 2 * padding,
-                                  ),
-                                  delegate: SliverChildBuilderDelegate(
-                                    (_, index) => _catalogTile(items[index]),
-                                    childCount: items.length,
-                                  ),
-                                ),
-                              ),
-                              SliverToBoxAdapter(
-                                child: Padding(
-                                  padding: const EdgeInsets.only(bottom: 24),
-                                  child: Center(
-                                    child: _loadingMore
-                                        ? const CircularProgressIndicator()
-                                        : _hasMore
-                                        ? OutlinedButton.icon(
-                                            onPressed: () => _load(more: true),
-                                            icon: const Icon(
-                                              Icons.expand_more_rounded,
-                                            ),
-                                            label: const Text('加载更多'),
-                                          )
-                                        : Text(
-                                            '已经看到这里的全部剧集',
-                                            style: TextStyle(
-                                              color: Theme.of(
-                                                context,
-                                              ).colorScheme.onSurfaceVariant,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                        },
+                      ),
+              ),
             ),
           ),
           if (_selectionMode && selectionInBody)
             _selectionBar(safeBottom: false),
         ],
+        if (television)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                _focusedTitle == null
+                    ? '确认播放 · 长按确认更多 · 返回回到顶栏'
+                    : '$_focusedTitle · 确认播放 · 返回回到顶栏',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -1490,16 +1805,18 @@ class _HomeScreenState extends State<HomeScreen> {
     ScrollController? controller,
     Widget? footer,
   }) {
-    final columns = ((width - 36) / 150).floor().clamp(1, 8);
-    final tileWidth = (width - 36 - (columns - 1) * 14) / columns;
+    final columns = ((width - 48) / 180).floor().clamp(1, 7);
+    final tileWidth = (width - 48 - (columns - 1) * 20) / columns;
     return RemoteGrid(
       key: ValueKey('tv-grid-$key'),
       itemKeys: items.map((item) => item.id).toList(),
       columns: columns,
       itemExtent: DramaTile.extentFor(context, tileWidth - 14) + 14,
+      spacing: 20,
       controller: controller,
       footer: footer,
-      padding: const EdgeInsets.fromLTRB(18, 2, 18, 18),
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+      onUp: () => _focusTvRegion(_catalogHeaderFocus),
       itemBuilder: (_, index, node, onFocus) =>
           _catalogTile(items[index], focusNode: node, onFocus: onFocus),
     );

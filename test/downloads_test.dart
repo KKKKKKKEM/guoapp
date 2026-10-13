@@ -494,15 +494,26 @@ void main() {
       await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pumpAndSettle();
-      focusRemote(tester, find.byKey(const ValueKey('download-task-1')));
+      focusRemote(
+        tester,
+        find.byKey(
+          ValueKey('tv-download-collection-${FixtureRepository.free.id}'),
+        ),
+      );
       await tester.pumpAndSettle();
-      for (var i = 0; i < 12; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.select);
+      await tester.pumpAndSettle();
+      for (
+        var i = 0;
+        i < 20 && FocusManager.instance.primaryFocus?.debugLabel != 'remote-13';
+        i++
+      ) {
         await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
         await tester.pumpAndSettle();
       }
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'remote-13');
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tester.pumpAndSettle();
-      expect(find.text('测试短剧 · 第 13 集').last, findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.select);
       await tick(tester);
       expect(repository.commands.last, 'resume:13');

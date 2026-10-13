@@ -1,9 +1,10 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:media_kit/media_kit.dart';
 
-import 'app_layout.dart';
 import 'lan_controller.dart';
 import 'player_interactions.dart';
 import 'widgets.dart';
@@ -40,6 +41,10 @@ class PlayerControls extends StatefulWidget {
     this.onPush,
     this.onPictureInPicture,
     this.enhancement,
+    this.shortDramaMode = false,
+    this.forceLandscape = false,
+    this.onSettings,
+    this.onOrientation,
   });
 
   final Player player;
@@ -70,6 +75,10 @@ class PlayerControls extends StatefulWidget {
   final Future<void> Function()? onPush;
   final Future<void> Function()? onPictureInPicture;
   final VideoEnhancementController? enhancement;
+  final bool shortDramaMode;
+  final bool forceLandscape;
+  final Future<void> Function()? onSettings;
+  final VoidCallback? onOrientation;
 
   @override
   State<PlayerControls> createState() => _PlayerControlsState();
@@ -155,7 +164,12 @@ class _PlayerControlsState extends State<PlayerControls> {
   }
 
   void _interactionChanged() {
-    if (mounted && widget.interactions.feedback.isNotEmpty) _show();
+    if (!mounted) return;
+    if (widget.swipeEnabled) {
+      _scheduleHide();
+    } else if (widget.interactions.feedback.isNotEmpty) {
+      _show();
+    }
   }
 
   void _scheduleHide() {
@@ -228,12 +242,30 @@ class _PlayerControlsState extends State<PlayerControls> {
               key: const ValueKey('player-gesture-surface'),
               behavior: HitTestBehavior.opaque,
               onPointerDown: (event) {
-                widget.onFocusSurface();
+                var systemGesture = false;
+                if (widget.swipeEnabled &&
+                    event.kind == PointerDeviceKind.touch) {
+                  final view = View.of(context);
+                  final bottomInset = math.max(
+                    32.0,
+                    math.max(
+                          view.systemGestureInsets.bottom,
+                          view.viewPadding.bottom,
+                        ) /
+                        view.devicePixelRatio,
+                  );
+                  systemGesture =
+                      event.position.dy >=
+                      view.physicalSize.height / view.devicePixelRatio -
+                          bottomInset;
+                }
+                if (!systemGesture) widget.onFocusSurface();
                 widget.interactions.pointerDown(
                   event,
                   swipeEnabled: widget.swipeEnabled,
                   width: constraints.maxWidth,
                   height: constraints.maxHeight,
+                  systemGesture: systemGesture,
                 );
               },
               onPointerMove: widget.interactions.pointerMove,
@@ -341,12 +373,41 @@ class _PlayerControlsState extends State<PlayerControls> {
               Expanded(
                 child: Text(
                   widget.title,
+                  style: const TextStyle(color: Colors.white),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               )
             else
               const Spacer(),
+            if (widget.swipeEnabled && widget.onSettings != null)
+              TextButton.icon(
+                key: const ValueKey('player-mode'),
+                onPressed: widget.enabled
+                    ? () => _panel(widget.onSettings!)
+                    : null,
+                icon: Icon(
+                  widget.shortDramaMode
+                      ? Icons.swipe_up_rounded
+                      : Icons.movie_outlined,
+                  size: 18,
+                ),
+                label: Text(widget.shortDramaMode ? '短剧' : '普通'),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  backgroundColor: Colors.black.withValues(alpha: .36),
+                ),
+              ),
+            if (widget.swipeEnabled &&
+                widget.fullscreen &&
+                widget.onOrientation != null)
+              _overlayIconButton(
+                tooltip: widget.forceLandscape ? '恢复默认方向' : '强制横屏',
+                onPressed: widget.onOrientation,
+                icon: widget.forceLandscape
+                    ? Icons.screen_lock_landscape_rounded
+                    : Icons.screen_rotation_alt_rounded,
+              ),
             if (compact)
               _overlayIconButton(
                 tooltip: '旋转与全屏',
@@ -992,14 +1053,20 @@ class _PlayerControlsState extends State<PlayerControls> {
     builder: (context, _) {
       final hud = widget.interactions.hudState;
       final feedback = widget.interactions.feedback;
-      if (hud.type == SwipeAction.brightness) {
+      if (hud.type == SwipeAction.brightness ||
+          hud.type == SwipeAction.volume) {
         final value = hud.value.clamp(0.0, 1.0);
         final percent = (value * 100).round();
-        final icon = value < 0.33
+        final volume = hud.type == SwipeAction.volume;
+        final icon = volume
+            ? value == 0
+                  ? Icons.volume_off_rounded
+                  : Icons.volume_up_rounded
+            : value < 0.33
             ? Icons.brightness_low_rounded
             : value < 0.66
-                ? Icons.brightness_medium_rounded
-                : Icons.brightness_high_rounded;
+            ? Icons.brightness_medium_rounded
+            : Icons.brightness_high_rounded;
         return IgnorePointer(
           child: Center(
             child: Container(
@@ -1008,7 +1075,10 @@ class _PlayerControlsState extends State<PlayerControls> {
               decoration: BoxDecoration(
                 color: Colors.black.withValues(alpha: .75),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: Colors.white.withValues(alpha: .15), width: 1),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: .15),
+                  width: 1,
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: Colors.black.withValues(alpha: .4),
@@ -1030,13 +1100,15 @@ class _PlayerControlsState extends State<PlayerControls> {
                       child: LinearProgressIndicator(
                         value: value,
                         backgroundColor: Colors.white24,
-                        valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                        valueColor: const AlwaysStoppedAnimation<Color>(
+                          Colors.white,
+                        ),
                       ),
                     ),
                   ),
                   const SizedBox(height: 12),
                   Text(
-                    '亮度 $percent%',
+                    '${volume ? '音量' : '亮度'} $percent%',
                     style: const TextStyle(
                       color: Colors.white,
                       fontSize: 14,
@@ -1065,7 +1137,11 @@ class _PlayerControlsState extends State<PlayerControls> {
             child: Text(
               feedback,
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           ),
         ),

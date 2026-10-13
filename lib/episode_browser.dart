@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
+import 'adaptive_text_field.dart';
 import 'models.dart';
 import 'remote_widgets.dart';
 
@@ -45,7 +46,7 @@ class EpisodeRangeBar extends StatelessWidget {
 
           return AlertDialog(
             title: const Text('跳转到指定集数'),
-            content: TextField(
+            content: AdaptiveTextField(
               controller: controller,
               autofocus: true,
               keyboardType: TextInputType.number,
@@ -318,7 +319,7 @@ class _EpisodeBrowserState extends State<EpisodeBrowser> {
     final colors = Theme.of(context).colorScheme;
     final selectedPage = (target ~/ episodePageSize).clamp(0, pageCount - 1);
     return SizedBox(
-      height: 34,
+      height: AppLayout.isTelevision(context) ? 60 : 34,
       child: ListView.separated(
         padding: const EdgeInsets.fromLTRB(4, 2, 4, 3),
         scrollDirection: Axis.horizontal,
@@ -330,7 +331,10 @@ class _EpisodeBrowserState extends State<EpisodeBrowser> {
           final selected = page == selectedPage;
           return OutlinedButton(
             style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 28),
+              minimumSize: Size(
+                0,
+                AppLayout.isTelevision(context) ? TelevisionStyle.target : 28,
+              ),
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               padding: const EdgeInsets.symmetric(horizontal: 10),
               foregroundColor: selected ? colors.onPrimary : colors.onSurface,
@@ -338,7 +342,11 @@ class _EpisodeBrowserState extends State<EpisodeBrowser> {
               side: BorderSide(
                 color: selected ? colors.primary : colors.outlineVariant,
               ),
-              textStyle: const TextStyle(fontSize: 12),
+              textStyle: TextStyle(
+                fontSize: AppLayout.isTelevision(context)
+                    ? TelevisionStyle.secondary
+                    : 12,
+              ),
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(7),
               ),
@@ -365,12 +373,19 @@ class _EpisodeBrowserState extends State<EpisodeBrowser> {
         1,
         (value, episode) => max(value, episode.number.toString().length),
       );
-      final minimum = max(40.0, scale.scale(14) * digits * .62 + 22);
+      final fontSize = television ? TelevisionStyle.body : 14.0;
+      final minimum = max(
+        television ? 84.0 : 40.0,
+        scale.scale(fontSize) * digits * .62 + 22,
+      );
       final columns = ((constraints.maxWidth - 12) / minimum).floor().clamp(
-        5,
+        television ? 1 : 5,
         television ? 12 : 10,
       );
-      final extent = max(34.0, scale.scale(14) + 18);
+      final extent = max(
+        television ? TelevisionStyle.target : 34.0,
+        scale.scale(fontSize) + 18,
+      );
       final target = max(
         0,
         widget.episodes.indexWhere(

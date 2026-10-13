@@ -194,6 +194,69 @@ void main() {
     }
   });
 
+  testWidgets('phone hold and release keep hidden playback controls hidden', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      final player = ScriptedPlayer();
+      await mount(
+        tester,
+        RouteRepository(),
+        player,
+        size: const Size(390, 844),
+      );
+      await tester.pump(const Duration(seconds: 5));
+      final pause = find.byTooltip('暂停播放').hitTestable();
+      expect(pause, findsNothing);
+      final surface = tester.getRect(
+        find.byKey(const ValueKey('player-gesture-surface')),
+      );
+      final gesture = await tester.startGesture(surface.center);
+      await tester.pump(const Duration(milliseconds: 400));
+      await settleOperations(tester);
+      expect(player.state.rate, 2);
+      expect(pause, findsNothing);
+      await gesture.up();
+      await settleOperations(tester);
+      expect(player.state.rate, 1);
+      expect(pause, findsNothing);
+      await tester.pump(const Duration(seconds: 2));
+      await unmount(tester, player);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
+  });
+
+  testWidgets(
+    'phone horizontal swipe previews without seeking and commits on release',
+    (tester) async {
+      debugDefaultTargetPlatformOverride = TargetPlatform.android;
+      try {
+        final repository = RouteRepository();
+        final player = ScriptedPlayer();
+        await mount(tester, repository, player, size: const Size(390, 844));
+        await tester.pump(const Duration(seconds: 5));
+        final surface = tester.getRect(
+          find.byKey(const ValueKey('player-gesture-surface')),
+        );
+        final gesture = await tester.startGesture(surface.center);
+        await gesture.moveBy(Offset(surface.width * .2, 0));
+        await tester.pump();
+        expect(player.state.position, const Duration(seconds: 7));
+        expect(find.byTooltip('暂停播放').hitTestable(), findsNothing);
+        await gesture.up();
+        await settleOperations(tester);
+        expect(player.state.position, const Duration(seconds: 25));
+        expect(repository.requestedEpisodes, [1]);
+        expect(find.byTooltip('暂停播放').hitTestable(), findsNothing);
+        await unmount(tester, player);
+      } finally {
+        debugDefaultTargetPlatformOverride = null;
+      }
+    },
+  );
+
   testWidgets('mobile player pane starts below the system status area', (
     tester,
   ) async {

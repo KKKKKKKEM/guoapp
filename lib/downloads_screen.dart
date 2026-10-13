@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'app_layout.dart';
+import 'adaptive_text_field.dart';
 import 'core_bridge.dart';
 import 'download_collections.dart';
 import 'local_store.dart';
@@ -13,6 +14,7 @@ import 'models.dart';
 import 'player_screen.dart';
 import 'settings_screen.dart';
 import 'widgets.dart';
+import 'remote_widgets.dart';
 
 class DownloadsScreen extends StatefulWidget {
   const DownloadsScreen({
@@ -21,17 +23,21 @@ class DownloadsScreen extends StatefulWidget {
     required this.store,
     this.embedded = false,
     this.playerBuilder,
+    this.searchFocusNode,
+    this.onSearchUp,
   });
   final AppRepository repository;
   final LocalStore store;
   final bool embedded;
+  final FocusNode? searchFocusNode;
+  final VoidCallback? onSearchUp;
   @visibleForTesting
   final Widget Function(DramaDetail, int, double)? playerBuilder;
   @override
-  State<DownloadsScreen> createState() => _DownloadsScreenState();
+  State<DownloadsScreen> createState() => DownloadsScreenState();
 }
 
-class _DownloadsScreenState extends State<DownloadsScreen> {
+class DownloadsScreenState extends State<DownloadsScreen> {
   Timer? _timer;
   final _search = TextEditingController();
   final _selected = <String>{};
@@ -47,6 +53,74 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       _stopBatch = false;
   String? _error, _retryCommand;
   String _filter = 'all', _release = '', _operation = '';
+  FocusNode? _ownedTvSearchFocus,
+      _ownedTvReturnFocus,
+      _ownedTvStopFocus,
+      _ownedTvBatchFocus;
+  FocusScopeNode? _ownedTvContentFocus;
+  final _tvFilterNodes = <String, FocusNode>{};
+  String? _tvCollectionId;
+  final _tvTitle = ValueNotifier<String>('');
+  FocusNode get _tvSearchFocus =>
+      widget.searchFocusNode ??
+      (_ownedTvSearchFocus ??= FocusNode(debugLabel: 'tv-download-search'));
+  FocusNode get _tvReturnFocus =>
+      _ownedTvReturnFocus ??= FocusNode(debugLabel: 'tv-download-return');
+  FocusNode get _tvStopFocus =>
+      _ownedTvStopFocus ??= FocusNode(debugLabel: 'tv-download-stop');
+  FocusNode get _tvBatchFocus =>
+      _ownedTvBatchFocus ??= FocusNode(debugLabel: 'tv-download-batch');
+  FocusScopeNode get _tvContentFocus => _ownedTvContentFocus ??= FocusScopeNode(
+    debugLabel: 'tv-download-content',
+  );
+  FocusNode _tvFilterFocus(String id) => _tvFilterNodes.putIfAbsent(
+    id,
+    () => FocusNode(debugLabel: 'tv-download-filter-$id'),
+  );
+
+  void _exitSelection() => setState(() {
+    _selecting = false;
+    _selected.clear();
+    _retryCommand = null;
+  });
+
+  void _focusTvContent() {
+    if (_ownedTvContentFocus?.context == null ||
+        !_tvContentFocus.traversalDescendants.any(
+          (node) => node.canRequestFocus && !node.skipTraversal,
+        )) {
+      _tvFilterFocus(_filter).requestFocus();
+      return;
+    }
+    final previous = _tvContentFocus.focusedChild;
+    _tvContentFocus.requestFocus();
+    if (previous == null) _tvContentFocus.nextFocus();
+  }
+
+  void _closeTvCollection() {
+    setState(() => _tvCollectionId = null);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusTvContent();
+    });
+  }
+
+  bool handleTelevisionBack() {
+    if (!mounted || !AppLayout.isTelevision(context)) return false;
+    if (_selecting) {
+      if (_busy) {
+        setState(() => _stopBatch = true);
+      } else {
+        _exitSelection();
+      }
+      return true;
+    }
+    if (_tvCollectionId != null) {
+      _closeTvCollection();
+      return true;
+    }
+    return false;
+  }
+
   bool get _allowed =>
       widget.store.profileEpoch == _epoch && widget.store.canDownload;
   List<DownloadCollection> get _collections => downloadCollections(
@@ -76,6 +150,15 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     _stopBatch = true;
     _timer?.cancel();
     _search.dispose();
+    _ownedTvSearchFocus?.dispose();
+    _ownedTvReturnFocus?.dispose();
+    _ownedTvStopFocus?.dispose();
+    _ownedTvBatchFocus?.dispose();
+    _ownedTvContentFocus?.dispose();
+    _tvTitle.dispose();
+    for (final node in _tvFilterNodes.values) {
+      node.dispose();
+    }
     widget.store.removeListener(_changed);
     _updater.removeListener(_changed);
     _updater.dispose();
@@ -157,6 +240,11 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       _stopBatch = false;
       _retryCommand = null;
     });
+    if (AppLayout.isTelevision(context)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _busy) _tvStopFocus.requestFocus();
+      });
+    }
     final failures = <String, String>{};
     var completed = 0;
     try {
@@ -611,10 +699,837 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
     ),
   );
 
+  static const _tvStates = {
+    'all': '全部',
+    'pending': '未完成',
+    'active': '进行中',
+    'paused': '已暂停',
+    'failed': '失败',
+    'completed': '已下载',
+    'archived': '保留视频',
+  };
+
+  Future<String?> _tvMenu(String title, List<(String, String)> choices) =>
+      showDialog<String>(
+        context: context,
+        builder: (context) => Dialog(
+          child: SizedBox(
+            width: 620,
+            height: math.min(600, MediaQuery.sizeOf(context).height * .8),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: '关闭操作菜单',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: RemoteGrid(
+                      itemKeys: choices.map((entry) => entry.$1).toList(),
+                      columns: 1,
+                      itemExtent: math.max(
+                        64,
+                        MediaQuery.textScalerOf(
+                                  context,
+                                ).scale(TelevisionStyle.body) *
+                                2.6 +
+                            28,
+                      ),
+                      autofocus: true,
+                      padding: const EdgeInsets.all(4),
+                      spacing: 8,
+                      itemBuilder: (_, index, node, onFocus) => RemoteButton(
+                        key: ValueKey(
+                          'tv-download-action-${choices[index].$1}',
+                        ),
+                        label: choices[index].$2,
+                        maxLines: 2,
+                        focusNode: node,
+                        onFocus: onFocus,
+                        onPressed: () =>
+                            Navigator.pop(context, choices[index].$1),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+
+  void _restoreTvFocus(FocusNode? node) {
+    if (!mounted || !(ModalRoute.of(context)?.isCurrent ?? true)) return;
+    if (node?.context != null) {
+      node!.requestFocus();
+    } else if (_tvCollectionId != null) {
+      _tvReturnFocus.requestFocus();
+    } else {
+      _tvSearchFocus.requestFocus();
+    }
+  }
+
+  Future<void> _tvCollectionActions(
+    DownloadCollection collection,
+    FocusNode node,
+  ) async {
+    if (_busy) return;
+    try {
+      final command = await _tvMenu(collection.drama.title, [
+        if (!_updater.busy) ('update', '更新本剧 · 补充新增与缺失'),
+        ('select', '选择本合集'),
+        if (collection.jobs.any((job) => job.active)) ('pause', '暂停本合集'),
+        if (collection.jobs.any((job) => job.resumable))
+          ('resume', '继续 / 重试本合集'),
+        if (collection.jobs.any((job) => job.completed && !job.archived))
+          ('archive', '清理已完成任务，保留视频'),
+        if (collection.jobs.any((job) => job.archived)) ('restore', '恢复到任务列表'),
+        ('remove', '取消任务并删除视频'),
+      ]);
+      if (!mounted || !_allowed || command == null) return;
+      final jobs = _jobs
+          .where((job) => job.drama.id == collection.drama.id)
+          .toList();
+      if (command == 'update') {
+        await _update(collection.drama);
+      } else if (command == 'select') {
+        _select(jobs);
+      } else {
+        await _batch(command, jobs);
+      }
+    } finally {
+      _restoreTvFocus(node);
+    }
+  }
+
+  Future<void> _tvEpisodeActions(DownloadJob job, FocusNode node) async {
+    if (_busy) return;
+    try {
+      final command =
+          await _tvMenu('${job.drama.title} · 第 ${job.episode.number} 集', [
+            if (job.completed) ('play', '本地播放'),
+            if (job.active) ('pause', '暂停下载'),
+            if (job.resumable) ('resume', '继续 / 重试下载'),
+            ('select', '选择此集'),
+            if (job.error.isNotEmpty) ('error', '查看失败原因'),
+            if (job.completed)
+              (
+                job.archived ? 'restore' : 'archive',
+                job.archived ? '恢复到任务列表' : '清理任务，保留视频',
+              ),
+            ('remove', job.completed ? '删除视频' : '取消下载'),
+          ]);
+      if (!mounted || !_allowed || command == null) return;
+      final fresh = _jobs.where((entry) => entry.id == job.id).firstOrNull;
+      if (fresh == null) return;
+      if (command == 'play') {
+        await _play(fresh);
+      } else if (command == 'select') {
+        _select([fresh]);
+      } else if (command == 'error') {
+        await showDialog<void>(
+          context: context,
+          builder: (context) => AlertDialog(
+            scrollable: true,
+            title: const Text('下载失败原因'),
+            content: Text(fresh.error),
+            actions: [
+              TextButton(
+                autofocus: true,
+                onPressed: () => Navigator.pop(context),
+                child: const Text('关闭'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        await _batch(command, [fresh]);
+      }
+    } finally {
+      _restoreTvFocus(node);
+    }
+  }
+
+  Future<void> _tvToolbarActions(List<DownloadCollection> collections) async {
+    final command = await _tvMenu('下载管理', [
+      ('filter', '筛选任务与剧集状态'),
+      if (_selecting) ...[
+        ('select-all', '全选当前结果'),
+        ('exit-selection', '退出多选'),
+      ] else
+        ('select', '多选下载任务'),
+      ('local', '本地媒体与合并'),
+      ('pause', '全部暂停'),
+      ('resume', '全部继续 / 重试'),
+      ('archive', '清理已完成任务，保留视频'),
+      ('refresh', '刷新记录'),
+    ]);
+    if (!mounted || !_allowed || command == null) return;
+    if (command == 'filter') {
+      await _filters();
+      if (!mounted || !_allowed) return;
+      setState(() => _tvCollectionId = null);
+    } else if (command == 'select') {
+      setState(() => _selecting = true);
+    } else if (command == 'select-all') {
+      _select(collections.expand((collection) => collection.jobs));
+    } else if (command == 'exit-selection') {
+      _exitSelection();
+    } else if (command == 'local') {
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) => LocalMediaScreen(
+            repository: widget.repository,
+            store: widget.store,
+          ),
+        ),
+      );
+    } else if (command == 'refresh') {
+      await _refresh();
+    } else {
+      await _batch(command, _jobs);
+    }
+    _restoreTvFocus(_ownedTvSearchFocus ?? widget.searchFocusNode);
+  }
+
+  Future<void> _tvBatchActions() async {
+    final command = await _tvMenu('已选 ${_selected.length} 项', [
+      ('pause', '暂停所选'),
+      ('resume', '继续 / 重试所选'),
+      ('archive', '清理所选任务，保留视频'),
+      ('remove', '取消所选任务并删除视频'),
+      if (_retryCommand != null) ('retry', '重试失败项'),
+    ]);
+    if (!mounted || !_allowed || command == null) return;
+    await _batch(
+      command == 'retry' ? _retryCommand! : command,
+      _jobs.where((job) => _selected.contains(job.id)),
+    );
+    _restoreTvFocus(_ownedTvSearchFocus ?? widget.searchFocusNode);
+  }
+
+  Widget _tvDownloadCard({
+    required String id,
+    required String title,
+    required String summary,
+    required String status,
+    required String action,
+    required double progress,
+    required IconData icon,
+    required FocusNode node,
+    required VoidCallback onFocus,
+    required VoidCallback? onPressed,
+    required VoidCallback onMore,
+    bool selected = false,
+    bool error = false,
+  }) {
+    final colors = Theme.of(context).colorScheme;
+    return CallbackShortcuts(
+      bindings: {
+        const SingleActivator(
+          LogicalKeyboardKey.contextMenu,
+          includeRepeats: false,
+        ): onMore,
+      },
+      child: RemoteTarget(
+        key: ValueKey(id),
+        focusNode: node,
+        onFocus: () {
+          onFocus();
+          _tvTitle.value = title;
+        },
+        selected: selected,
+        focusScale: 1.02,
+        onPressed: onPressed,
+        onLongPress: onMore,
+        label: '$title，$status，$summary',
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: colors.surfaceContainerLow,
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      selected ? Icons.check_circle_rounded : icon,
+                      size: 34,
+                      color: error ? colors.error : colors.primary,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: TelevisionStyle.body,
+                          height: 1.3,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Text(
+                  summary,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: TelevisionStyle.secondary,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  status,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: TelevisionStyle.secondary,
+                    color: error ? colors.error : colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                LinearProgressIndicator(
+                  value: progress.clamp(0.0, 1.0),
+                  minHeight: 4,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  action,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: TelevisionStyle.secondary,
+                    color: colors.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _televisionDownloads() {
+    final colors = Theme.of(context).colorScheme;
+    final collections = _collections;
+    final current = _tvCollectionId == null
+        ? null
+        : collections
+              .where((collection) => collection.drama.id == _tvCollectionId)
+              .firstOrNull;
+    final opened = _tvCollectionId != null;
+    final jobs = current?.jobs ?? const <DownloadJob>[];
+    final counts = <String, int>{for (final id in _tvStates.keys) id: 0};
+    for (final job in _jobs) {
+      if (job.archived) {
+        counts['archived'] = counts['archived']! + 1;
+        continue;
+      }
+      counts['all'] = counts['all']! + 1;
+      if (!job.completed) counts['pending'] = counts['pending']! + 1;
+      if (job.active) counts['active'] = counts['active']! + 1;
+      if (counts.containsKey(job.state)) {
+        counts[job.state] = counts[job.state]! + 1;
+      }
+    }
+    return Focus(
+      canRequestFocus: false,
+      onKeyEvent: (_, event) {
+        if (!(const [
+          LogicalKeyboardKey.escape,
+          LogicalKeyboardKey.goBack,
+          LogicalKeyboardKey.browserBack,
+        ]).contains(event.logicalKey)) {
+          return KeyEventResult.ignored;
+        }
+        if (event is KeyRepeatEvent) return KeyEventResult.handled;
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (handleTelevisionBack()) return KeyEventResult.handled;
+        if (!widget.embedded) {
+          Navigator.of(context).maybePop();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: LayoutBuilder(
+        builder: (context, constraints) => SingleChildScrollView(
+          child: SizedBox(
+            height: math.max(380, constraints.maxHeight),
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: Focus(
+                    canRequestFocus: false,
+                    onKeyEvent: (_, event) {
+                      if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+                        return KeyEventResult.ignored;
+                      }
+                      if (event.logicalKey == LogicalKeyboardKey.arrowUp &&
+                          widget.onSearchUp != null) {
+                        widget.onSearchUp!();
+                        return KeyEventResult.handled;
+                      }
+                      if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                        _focusTvContent();
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: Row(
+                      children: [
+                        if (opened) ...[
+                          RemoteButton(
+                            key: const ValueKey('tv-download-back-collections'),
+                            label: '合集',
+                            focusNode: _tvReturnFocus,
+                            icon: Icons.arrow_back_rounded,
+                            onPressed: _closeTvCollection,
+                          ),
+                          const SizedBox(width: 12),
+                        ],
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                current?.drama.title ??
+                                    (opened ? '分集记录' : '下载合集'),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.titleLarge,
+                              ),
+                              Text(
+                                _selecting
+                                    ? '已选 ${_selected.length} 项'
+                                    : opened
+                                    ? '${jobs.length} 集 · 确认播放或管理'
+                                    : '${collections.length} 部 · ${collections.fold<int>(0, (sum, collection) => sum + collection.jobs.length)} 集',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(
+                          width: (constraints.maxWidth * .28).clamp(
+                            220.0,
+                            300.0,
+                          ),
+                          child: AdaptiveTextField(
+                            key: const ValueKey('downloads-search'),
+                            controller: _search,
+                            focusNode: _tvSearchFocus,
+                            onChanged: (_) =>
+                                setState(() => _tvCollectionId = null),
+                            textInputAction: TextInputAction.search,
+                            decoration: const InputDecoration(
+                              hintText: '搜索下载',
+                              prefixIcon: Icon(Icons.search_rounded),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        RemoteButton(
+                          key: const ValueKey('tv-download-tools'),
+                          label: '更多',
+                          icon: Icons.more_horiz_rounded,
+                          onPressed: _busy
+                              ? null
+                              : () => _tvToolbarActions(collections),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(
+                        width: 196,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: colors.surfaceContainerLow,
+                            borderRadius: BorderRadius.circular(18),
+                          ),
+                          child: Focus(
+                            canRequestFocus: false,
+                            onKeyEvent: (_, event) {
+                              if (event is! KeyDownEvent &&
+                                  event is! KeyRepeatEvent) {
+                                return KeyEventResult.ignored;
+                              }
+                              if (event.logicalKey ==
+                                  LogicalKeyboardKey.arrowRight) {
+                                _focusTvContent();
+                                return KeyEventResult.handled;
+                              }
+                              if (event.logicalKey ==
+                                      LogicalKeyboardKey.arrowUp &&
+                                  _tvFilterFocus('all').hasFocus) {
+                                _tvSearchFocus.requestFocus();
+                                return KeyEventResult.handled;
+                              }
+                              return KeyEventResult.ignored;
+                            },
+                            child: ListView(
+                              padding: const EdgeInsets.all(4),
+                              children: [
+                                for (final entry in _tvStates.entries)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 4),
+                                    child: RemoteTarget(
+                                      key: ValueKey(
+                                        'tv-download-filter-${entry.key}',
+                                      ),
+                                      focusNode: _tvFilterFocus(entry.key),
+                                      selected: _filter == entry.key,
+                                      label:
+                                          '${entry.value}，${counts[entry.key]}项任务',
+                                      onPressed: () => setState(() {
+                                        _filter = entry.key;
+                                        _tvCollectionId = null;
+                                      }),
+                                      child: SizedBox(
+                                        height: 42,
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                          ),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                child: Text(
+                                                  entry.value,
+                                                  style: const TextStyle(
+                                                    fontSize:
+                                                        TelevisionStyle.body,
+                                                    height: 1.2,
+                                                  ),
+                                                ),
+                                              ),
+                                              Text(
+                                                '${counts[entry.key]}',
+                                                style: Theme.of(
+                                                  context,
+                                                ).textTheme.bodySmall,
+                                              ),
+                                              if (_filter == entry.key) ...[
+                                                const SizedBox(width: 6),
+                                                Icon(
+                                                  Icons.check_rounded,
+                                                  size: 18,
+                                                  color: colors.primary,
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: FocusScope(
+                          node: _tvContentFocus,
+                          child: _loading
+                              ? const Center(child: CircularProgressIndicator())
+                              : _error != null && _jobs.isEmpty
+                              ? StatusPanel(
+                                  title: '无法读取下载记录',
+                                  message: _error!,
+                                  onRetry: _refresh,
+                                )
+                              : collections.isEmpty || opened && jobs.isEmpty
+                              ? StatusPanel(
+                                  title: opened
+                                      ? '暂无符合条件的分集'
+                                      : _jobs.isEmpty
+                                      ? '还没有下载任务'
+                                      : '暂无符合条件的任务',
+                                  message: '选择左侧其他状态，或在剧集详情选择下载。',
+                                  icon: Icons.download_outlined,
+                                  secondaryAction: _search.text.isEmpty
+                                      ? null
+                                      : RemoteButton(
+                                          label: '清除搜索',
+                                          onPressed: () {
+                                            setState(() {
+                                              _search.clear();
+                                              _tvCollectionId = null;
+                                            });
+                                            _tvSearchFocus.requestFocus();
+                                          },
+                                        ),
+                                )
+                              : LayoutBuilder(
+                                  builder: (context, grid) {
+                                    final scale = MediaQuery.textScalerOf(
+                                      context,
+                                    );
+                                    final extent = math.max(
+                                      210.0,
+                                      scale.scale(TelevisionStyle.body) * 2.6 +
+                                          scale.scale(
+                                                TelevisionStyle.secondary,
+                                              ) *
+                                              4.5 +
+                                          78,
+                                    );
+                                    return RemoteGrid(
+                                      key: ValueKey(
+                                        'tv-download-${opened ? _tvCollectionId : 'collections'}-$_filter-$_release-${_search.text}',
+                                      ),
+                                      itemKeys: opened
+                                          ? jobs.map((job) => job.id).toList()
+                                          : collections
+                                                .map(
+                                                  (collection) =>
+                                                      collection.drama.id,
+                                                )
+                                                .toList(),
+                                      columns: grid.maxWidth >= 600 ? 2 : 1,
+                                      itemExtent: extent,
+                                      spacing: 16,
+                                      padding: const EdgeInsets.fromLTRB(
+                                        8,
+                                        8,
+                                        12,
+                                        16,
+                                      ),
+                                      onLeft: () => _tvFilterFocus(
+                                        _filter,
+                                      ).requestFocus(),
+                                      onUp: opened
+                                          ? _tvReturnFocus.requestFocus
+                                          : _tvSearchFocus.requestFocus,
+                                      onDown: _busy || _updater.busy
+                                          ? _tvStopFocus.requestFocus
+                                          : _selecting && _selected.isNotEmpty
+                                          ? _tvBatchFocus.requestFocus
+                                          : null,
+                                      itemBuilder: (_, index, node, onFocus) {
+                                        if (opened) {
+                                          final job = jobs[index];
+                                          return _tvDownloadCard(
+                                            id: 'download-task-${job.id}',
+                                            title:
+                                                '第 ${job.episode.number} 集${job.episode.vip ? ' · VIP' : ''}',
+                                            summary:
+                                                '${storageSize(job.bytes)}${job.total > 0 ? ' / ${storageSize(job.total)}' : ''}${job.actualQuality > 0 ? ' · ${job.actualQuality}P' : ''}',
+                                            status: job.archived
+                                                ? '已保留视频'
+                                                : job.error.isNotEmpty
+                                                ? '${job.stateLabel} · ${job.error}'
+                                                : job.stateLabel,
+                                            action: _selecting
+                                                ? '确认选择此集'
+                                                : job.completed
+                                                ? '确认本地播放 · 长按更多'
+                                                : '确认管理下载',
+                                            progress: job.completed
+                                                ? 1
+                                                : job.progress,
+                                            icon: job.completed
+                                                ? Icons.offline_pin_outlined
+                                                : Icons.downloading_rounded,
+                                            node: node,
+                                            onFocus: onFocus,
+                                            selected: _selected.contains(
+                                              job.id,
+                                            ),
+                                            error: job.state == 'failed',
+                                            onPressed: _busy
+                                                ? null
+                                                : () async {
+                                                    if (_selecting) {
+                                                      _select([job]);
+                                                    } else if (job.completed) {
+                                                      await _play(job);
+                                                      _restoreTvFocus(node);
+                                                    } else {
+                                                      await _tvEpisodeActions(
+                                                        job,
+                                                        node,
+                                                      );
+                                                    }
+                                                  },
+                                            onMore: () =>
+                                                _tvEpisodeActions(job, node),
+                                          );
+                                        }
+                                        final collection = collections[index];
+                                        final count = collection.jobs
+                                            .where(
+                                              (job) =>
+                                                  _selected.contains(job.id),
+                                            )
+                                            .length;
+                                        final completed = collection.completed,
+                                            active = collection.active,
+                                            failed = collection.failed;
+                                        return _tvDownloadCard(
+                                          id: 'tv-download-collection-${collection.drama.id}',
+                                          title: collection.drama.title,
+                                          summary:
+                                              '$completed/${collection.jobs.length} 集已下载 · ${storageSize(collection.bytes)}',
+                                          status: _selecting
+                                              ? '$count/${collection.jobs.length} 项已选'
+                                              : '$active 项进行中 · $failed 项失败',
+                                          action: _selecting
+                                              ? '确认选择本合集'
+                                              : '确认查看分集 · 长按更多',
+                                          progress: collection.jobs.isEmpty
+                                              ? 0
+                                              : completed /
+                                                    collection.jobs.length,
+                                          icon: Icons.folder_rounded,
+                                          node: node,
+                                          onFocus: onFocus,
+                                          selected: count > 0,
+                                          error: failed > 0,
+                                          onPressed: _busy
+                                              ? null
+                                              : () {
+                                                  if (_selecting) {
+                                                    _select(collection.jobs);
+                                                  } else {
+                                                    setState(
+                                                      () => _tvCollectionId =
+                                                          collection.drama.id,
+                                                    );
+                                                    WidgetsBinding.instance
+                                                        .addPostFrameCallback((
+                                                          _,
+                                                        ) {
+                                                          if (mounted) {
+                                                            _focusTvContent();
+                                                          }
+                                                        });
+                                                  }
+                                                },
+                                          onMore: () => _tvCollectionActions(
+                                            collection,
+                                            node,
+                                          ),
+                                        );
+                                      },
+                                    );
+                                  },
+                                ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                  child: Focus(
+                    canRequestFocus: false,
+                    onKeyEvent: (_, event) {
+                      if (event is KeyDownEvent &&
+                          event.logicalKey == LogicalKeyboardKey.arrowUp) {
+                        _focusTvContent();
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: ValueListenableBuilder<String>(
+                            valueListenable: _tvTitle,
+                            builder: (context, title, _) => Text(
+                              _busy
+                                  ? _operation
+                                  : _updater.busy
+                                  ? _updater.status
+                                  : _error ??
+                                        '${title.isEmpty ? '' : '$title · '}确认进入 / 播放 · 长按确认更多 · 返回回到上层',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ),
+                        ),
+                        if (_busy || _updater.busy)
+                          RemoteButton(
+                            key: const ValueKey('tv-download-stop'),
+                            focusNode: _tvStopFocus,
+                            label: _busy ? '停止批量操作' : '停止更新',
+                            onPressed: _busy
+                                ? () => setState(() => _stopBatch = true)
+                                : _updater.cancel,
+                          )
+                        else if (_selecting)
+                          RemoteButton(
+                            key: const ValueKey('tv-download-batch'),
+                            focusNode: _tvBatchFocus,
+                            label: '已选 ${_selected.length} · 批量操作',
+                            onPressed: _selected.isEmpty
+                                ? null
+                                : _tvBatchActions,
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_allowed) {
       return const StatusPanel(title: '当前用户无权访问下载', message: '请返回后重新操作。');
+    }
+    if (AppLayout.isTelevision(context)) {
+      final content = _televisionDownloads();
+      if (widget.embedded) return content;
+      return PopScope(
+        canPop: !_selecting && _tvCollectionId == null,
+        onPopInvokedWithResult: (didPop, _) {
+          if (!didPop) handleTelevisionBack();
+        },
+        child: Scaffold(
+          appBar: AppBar(title: const Text('下载管理')),
+          body: TelevisionPageBody(child: content),
+        ),
+      );
     }
     final collections = _collections;
     final rows = <Object>[
@@ -647,7 +1562,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
           ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-          child: TextField(
+          child: AdaptiveTextField(
             controller: _search,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
@@ -732,7 +1647,7 @@ class _DownloadsScreenState extends State<DownloadsScreen> {
       },
       child: Scaffold(
         appBar: AppBar(title: Text(title), actions: actions),
-        body: SafeArea(top: false, child: body),
+        body: TelevisionPageBody(child: SafeArea(top: false, child: body)),
       ),
     );
   }

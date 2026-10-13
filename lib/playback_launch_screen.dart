@@ -2,6 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import 'package:flutter/services.dart';
+import 'app_layout.dart';
+import 'remote_widgets.dart';
 import 'core_bridge.dart';
 import 'follow_state.dart';
 import 'local_store.dart';
@@ -15,6 +18,19 @@ Future<void> openPlaybackDirectly(
   required AppRepository repository,
   required LocalStore store,
 }) async {
+  if (AppLayout.isTelevision(context)) {
+    if (!(ModalRoute.of(context)?.isCurrent ?? true)) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PlaybackLaunchScreen(
+          drama: drama,
+          repository: repository,
+          store: store,
+        ),
+      ),
+    );
+    return;
+  }
   final profileEpoch = store.profileEpoch;
   try {
     final detail = await repository.detail(drama);
@@ -105,6 +121,12 @@ class _PlaybackLaunchScreenState extends State<PlaybackLaunchScreen> {
   late final int _profileEpoch;
   int _generation = 0;
   String? _error;
+  bool _loading = false;
+  bool _confirming = false;
+  DramaDetail? _ready;
+  int _initialIndex = 0;
+  double _initialPosition = 0;
+  final _retryFocus = FocusNode(debugLabel: 'tv-launch-retry');
 
   @override
   void initState() {
@@ -115,11 +137,14 @@ class _PlaybackLaunchScreenState extends State<PlaybackLaunchScreen> {
 
   @override
   void dispose() {
+    _retryFocus.dispose();
     _generation++;
     super.dispose();
   }
 
   Future<void> _load() async {
+    if (_loading) return;
+    _loading = true;
     final generation = ++_generation;
     setState(() => _error = null);
     try {
@@ -145,14 +170,14 @@ class _PlaybackLaunchScreenState extends State<PlaybackLaunchScreen> {
         return;
       }
       if (merged.episodes.isEmpty) {
-        setState(() => _error = '暂时没有可播放的集数');
-        return;
+        throw AppFailure('暂时没有可播放的集数');
       }
       final watched = widget.store.watched(drama.id);
       final index = resumeEpisodeIndex(merged.episodes, watched);
       final episode = merged.episodes[index];
       if (episode.vip && drama.source != SourceSite.dsd.id) {
         if (!mounted) return;
+        setState(() => _confirming = true);
         final accepted = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
@@ -170,6 +195,7 @@ class _PlaybackLaunchScreenState extends State<PlaybackLaunchScreen> {
             ],
           ),
         );
+        if (mounted) setState(() => _confirming = false);
         if (accepted != true) {
           if (mounted) Navigator.of(context).maybePop();
           return;
@@ -187,50 +213,101 @@ class _PlaybackLaunchScreenState extends State<PlaybackLaunchScreen> {
           _profileEpoch != widget.store.profileEpoch) {
         return;
       }
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute<void>(
-          builder: (_) => PlayerScreen(
-            detail: merged,
-            initialIndex: index,
-            initialPosition: position,
-            repository: widget.repository,
-            store: widget.store,
-          ),
-        ),
-      );
+      setState(() {
+        _ready = merged;
+        _initialIndex = index;
+        _initialPosition = position;
+      });
     } catch (error) {
       if (!mounted || generation != _generation) return;
       setState(() => _error = error.toString());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _error != null && AppLayout.isTelevision(context))
+          _retryFocus.requestFocus();
+      });
       widget.repository.catalogUpdates.publish(
         widget.repository.catalogUpdates.current(widget.drama),
         retryCover: true,
       );
+    } finally {
+      _loading = false;
     }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.drama.title)),
-    body: SafeArea(
-      top: false,
-      child: _error == null
-          ? const Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircularProgressIndicator(),
-                  SizedBox(height: 16),
-                  Text('正在进入播放'),
-                ],
+  Widget build(BuildContext context) {
+    if (_ready != null) {
+      return PlayerScreen(
+        detail: _ready!,
+        initialIndex: _initialIndex,
+        initialPosition: _initialPosition,
+        repository: widget.repository,
+        store: widget.store,
+      );
+    }
+    final television = AppLayout.isTelevision(context);
+    return PopScope(
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) _generation++;
+      },
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(
+            LogicalKeyboardKey.escape,
+            includeRepeats: false,
+          ): () =>
+              Navigator.of(context).maybePop(),
+          const SingleActivator(
+            LogicalKeyboardKey.goBack,
+            includeRepeats: false,
+          ): () =>
+              Navigator.of(context).maybePop(),
+        },
+        child: Scaffold(
+          appBar: AppBar(title: Text(widget.drama.title)),
+          body: SafeArea(
+            child: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_error == null) ...[
+                      if (_confirming)
+                        const Icon(Icons.help_outline_rounded, size: 40)
+                      else
+                        const CircularProgressIndicator(),
+                      const SizedBox(height: 16),
+                      Text(_confirming ? '请确认是否尝试播放此集' : '正在获取剧集信息…'),
+                    ] else ...[
+                      const Icon(Icons.play_disabled_rounded, size: 40),
+                      const SizedBox(height: 16),
+                      const Text('暂时无法播放'),
+                      const SizedBox(height: 8),
+                      Text(_error!, textAlign: TextAlign.center),
+                      const SizedBox(height: 16),
+                      RemoteButton(
+                        key: const ValueKey('tv-launch-retry'),
+                        label: '重试',
+                        focusNode: _retryFocus,
+                        autofocus: television,
+                        onPressed: _load,
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    RemoteButton(
+                      key: const ValueKey('tv-launch-cancel'),
+                      label: '取消',
+                      autofocus: television && _error == null,
+                      onPressed: () => Navigator.of(context).maybePop(),
+                    ),
+                  ],
+                ),
               ),
-            )
-          : StatusPanel(
-              title: '暂时无法播放',
-              message: _error!,
-              onRetry: _load,
-              action: '重试',
-              icon: Icons.play_disabled_rounded,
             ),
-    ),
-  );
+          ),
+        ),
+      ),
+    );
+  }
 }

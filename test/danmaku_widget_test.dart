@@ -9,6 +9,7 @@ import 'package:duanju_app/player_screen.dart';
 import 'package:duanju_app/playback_preferences.dart';
 import 'package:duanju_app/television_controls.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -296,7 +297,11 @@ void main() {
                 onPressed: () async {
                   selected = await showDialog<TelevisionPlaybackSetting>(
                     context: context,
-                    builder: (_) => TelevisionSettingsDialog(
+                    builder: (_) => TelevisionPlayerMenu(
+                      player: Player(platformPlayer: ScriptedPlayer()),
+                      title: '测试视频', onTogglePlayback: () {}, onSeek: (_) {},
+                      onDiagnostics: () async {},
+                      episodes: const [], currentIndex: 0, initialTab: 3,
                       speed: 1,
                       quality: 0,
                       qualities: const [],
@@ -315,6 +320,8 @@ void main() {
         ),
       );
       await tester.tap(find.text('打开电视设置'));
+      await settle(tester);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
       await settle(tester);
       await tester.ensureVisible(
         find.byKey(const ValueKey('tv-danmaku-enabled')),

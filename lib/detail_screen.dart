@@ -47,6 +47,7 @@ class _DetailScreenState extends State<DetailScreen> {
   bool _episodesExpanded = false;
   final _episodeAnchor = GlobalKey();
   final _detailScroll = ScrollController();
+  final _startPlayFocus = FocusNode(debugLabel: 'tv-detail-play');
   bool _initialActionHandled = false;
   late final int _profileEpoch;
   Widget? get _sourceDiagnostics => widget.repository.supportsSourceManagement
@@ -77,6 +78,7 @@ class _DetailScreenState extends State<DetailScreen> {
   @override
   void dispose() {
     _detailScroll.dispose();
+    _startPlayFocus.dispose();
     widget.store.removeListener(_onStoreChanged);
     _generation++;
     super.dispose();
@@ -104,6 +106,10 @@ class _DetailScreenState extends State<DetailScreen> {
       final merged = widget.repository.catalogUpdates
           .current(widget.drama)
           .merge(detail.drama);
+      final focusOnReady =
+          !_initialActionHandled &&
+          !widget.resumeOnOpen &&
+          !widget.downloadOnOpen;
       setState(() {
         _detail = DramaDetail(merged, detail.episodes, warning: detail.warning);
         _loading = false;
@@ -113,6 +119,15 @@ class _DetailScreenState extends State<DetailScreen> {
               widget.store.watched(merged.id),
             ) ~/
             episodePageSize;
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted &&
+            focusOnReady &&
+            AppLayout.isTelevision(context) &&
+            detail.episodes.isNotEmpty &&
+            (ModalRoute.of(context)?.isCurrent ?? true)) {
+          _startPlayFocus.requestFocus();
+        }
       });
       widget.repository.catalogUpdates.publish(merged, retryCover: true);
       unawaited(_supplement(merged, generation));
@@ -332,7 +347,7 @@ class _DetailScreenState extends State<DetailScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          toolbarHeight: television ? 64 : null,
+          toolbarHeight: television ? 72 : null,
           title: Text(drama.title, overflow: TextOverflow.ellipsis),
           actions: [
             RefreshAction(
@@ -342,133 +357,136 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
           ],
         ),
-        body: SafeArea(
-          top: false,
-          bottom: false,
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1200),
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  if (!allowed) {
-                    return const StatusPanel(
-                      title: '当前用户无权访问',
-                      message: '请返回剧库后重新选择。',
-                    );
-                  }
-                  if (television || constraints.maxWidth >= 960) {
-                    return Row(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(
-                          width: (constraints.maxWidth * .34).clamp(
-                            250.0,
-                            360.0,
+        body: TelevisionPageBody(
+          child: SafeArea(
+            top: false,
+            bottom: false,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 1200),
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (!allowed) {
+                      return const StatusPanel(
+                        title: '当前用户无权访问',
+                        message: '请返回剧库后重新选择。',
+                      );
+                    }
+                    if (television || constraints.maxWidth >= 960) {
+                      return Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(
+                            width:
+                                (constraints.maxWidth *
+                                        (television ? .44 : .34))
+                                    .clamp(250.0, television ? 440.0 : 360.0),
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(20),
+                              child: _overview(drama),
+                            ),
                           ),
-                          child: SingleChildScrollView(
-                            padding: const EdgeInsets.all(20),
+                          const VerticalDivider(width: 1),
+                          Expanded(
+                            child:
+                                _loading || _error != null || episodes.isEmpty
+                                ? _episodeStatus()
+                                : Column(
+                                    children: [
+                                      _seriesSelector(drama),
+                                      Expanded(
+                                        child: EpisodeBrowser(
+                                          episodes: episodes,
+                                          currentNumber: watched?.episode,
+                                          onSelected: (index) => _play(index),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                          ),
+                        ],
+                      );
+                    }
+                    final start = _episodePage * episodePageSize;
+                    final visible = episodes
+                        .skip(start)
+                        .take(episodePageSize)
+                        .toList();
+                    final showEpisodes = _episodesExpanded;
+                    return CustomScrollView(
+                      controller: _detailScroll,
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
                             child: _overview(drama),
                           ),
                         ),
-                        const VerticalDivider(width: 1),
-                        Expanded(
-                          child: _loading || _error != null || episodes.isEmpty
-                              ? _episodeStatus()
-                              : Column(
-                                  children: [
-                                    _seriesSelector(drama),
-                                    Expanded(
-                                      child: EpisodeBrowser(
-                                        episodes: episodes,
-                                        currentNumber: watched?.episode,
-                                        onSelected: (index) => _play(index),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                        ),
-                      ],
-                    );
-                  }
-                  final start = _episodePage * episodePageSize;
-                  final visible = episodes
-                      .skip(start)
-                      .take(episodePageSize)
-                      .toList();
-                  final showEpisodes = _episodesExpanded;
-                  return CustomScrollView(
-                    controller: _detailScroll,
-                    slivers: [
-                      SliverToBoxAdapter(
-                        child: Padding(
-                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
-                          child: _overview(drama),
-                        ),
-                      ),
-                      if (_loading || _error != null || episodes.isEmpty)
-                        SliverFillRemaining(
-                          hasScrollBody: false,
-                          child: _episodeStatus(),
-                        )
-                      else ...[
-                        SliverToBoxAdapter(child: _seriesSelector(drama)),
-                        SliverToBoxAdapter(
-                          child: _episodeSummary(
-                            episodes,
-                            currentNumber: watched?.episode,
-                            expanded: showEpisodes,
-                          ),
-                        ),
-                        if (showEpisodes) ...[
+                        if (_loading || _error != null || episodes.isEmpty)
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: _episodeStatus(),
+                          )
+                        else ...[
+                          SliverToBoxAdapter(child: _seriesSelector(drama)),
                           SliverToBoxAdapter(
-                            child: EpisodeRangeBar(
-                              key: _episodeAnchor,
-                              episodes: episodes,
-                              page: _episodePage,
-                              title: '分组',
+                            child: _episodeSummary(
+                              episodes,
                               currentNumber: watched?.episode,
-                              onLocate: _locateEpisode,
+                              expanded: showEpisodes,
                             ),
                           ),
-                          SliverPadding(
-                            padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
-                            sliver: SliverGrid(
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: _episodeColumns(
-                                      constraints.maxWidth,
-                                      episodes,
-                                    ),
-                                    mainAxisExtent: math.max(
-                                      54,
-                                      MediaQuery.textScalerOf(
-                                            context,
-                                          ).scale(20) +
-                                          30,
-                                    ),
-                                    crossAxisSpacing: 10,
-                                    mainAxisSpacing: 10,
-                                  ),
-                              delegate: SliverChildBuilderDelegate((
-                                context,
-                                index,
-                              ) {
-                                final episode = visible[index];
-                                return RemoteEpisodeButton(
-                                  key: ValueKey('episode-${episode.number}'),
-                                  number: episode.number,
-                                  vip: episode.vip,
-                                  current: episode.number == watched?.episode,
-                                  onPressed: () => _play(start + index),
-                                );
-                              }, childCount: visible.length),
+                          if (showEpisodes) ...[
+                            SliverToBoxAdapter(
+                              child: EpisodeRangeBar(
+                                key: _episodeAnchor,
+                                episodes: episodes,
+                                page: _episodePage,
+                                title: '分组',
+                                currentNumber: watched?.episode,
+                                onLocate: _locateEpisode,
+                              ),
                             ),
-                          ),
+                            SliverPadding(
+                              padding: const EdgeInsets.fromLTRB(20, 4, 20, 24),
+                              sliver: SliverGrid(
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: _episodeColumns(
+                                        constraints.maxWidth,
+                                        episodes,
+                                      ),
+                                      mainAxisExtent: math.max(
+                                        54,
+                                        MediaQuery.textScalerOf(
+                                              context,
+                                            ).scale(20) +
+                                            30,
+                                      ),
+                                      crossAxisSpacing: 10,
+                                      mainAxisSpacing: 10,
+                                    ),
+                                delegate: SliverChildBuilderDelegate((
+                                  context,
+                                  index,
+                                ) {
+                                  final episode = visible[index];
+                                  return RemoteEpisodeButton(
+                                    key: ValueKey('episode-${episode.number}'),
+                                    number: episode.number,
+                                    vip: episode.vip,
+                                    current: episode.number == watched?.episode,
+                                    onPressed: () => _play(start + index),
+                                  );
+                                }, childCount: visible.length),
+                              ),
+                            ),
+                          ],
                         ],
                       ],
-                    ],
-                  );
-                },
+                    );
+                  },
+                ),
               ),
             ),
           ),
@@ -503,8 +521,12 @@ class _DetailScreenState extends State<DetailScreen> {
                         child: FilledButton.icon(
                           key: const ValueKey('start-play'),
                           autofocus: television,
+                          focusNode: _startPlayFocus,
                           style: FilledButton.styleFrom(
-                            minimumSize: const Size(0, 52),
+                            minimumSize: Size(
+                              0,
+                              television ? TelevisionStyle.target : 52,
+                            ),
                             padding: const EdgeInsets.symmetric(
                               horizontal: 16,
                               vertical: 12,
@@ -641,6 +663,7 @@ class _DetailScreenState extends State<DetailScreen> {
 
   Widget _overview(Drama drama) {
     final colors = Theme.of(context).colorScheme;
+    final television = AppLayout.isTelevision(context);
     final meta = [
       SourceSite.byId(drama.source).name,
       if (drama.episodes > 0) '共 ${drama.episodes} 集',
@@ -650,21 +673,27 @@ class _DetailScreenState extends State<DetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
+        Flex(
+          direction: Axis.horizontal,
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 92,
-              height: 138,
+              width: television ? 140 : 92,
+              height: television ? 210 : 138,
               child: DramaCover(drama: drama, repository: widget.repository),
             ),
             const SizedBox(width: 16),
-            Expanded(
+            Flexible(
+              fit: FlexFit.loose,
               child: Column(
+                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
                     drama.title,
+                    maxLines: television ? 3 : null,
+                    overflow: television ? TextOverflow.ellipsis : null,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
@@ -697,6 +726,14 @@ class _DetailScreenState extends State<DetailScreen> {
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
                     ),
+                  if (widget.store.watched(drama.id) case final watched?
+                      when television) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      '上次看到第 ${watched.episode} 集 · ${formatPosition(watched.position)}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -715,7 +752,10 @@ class _DetailScreenState extends State<DetailScreen> {
                 if (drama.heat.isNotEmpty) '热度 ${drama.heat}',
                 if (drama.views.isNotEmpty) '播放 ${drama.views}',
               ].join(' · '),
-              style: TextStyle(color: colors.onSurfaceVariant, fontSize: 12),
+              style: TextStyle(
+                color: colors.onSurfaceVariant,
+                fontSize: television ? TelevisionStyle.secondary : 12,
+              ),
             ),
           ),
         if (drama.tags.isNotEmpty)

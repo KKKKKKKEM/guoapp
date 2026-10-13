@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import 'app_layout.dart';
+import 'core_bridge.dart';
+import 'detail_screen.dart';
+import 'remote_widgets.dart';
 
 import 'follow_state.dart';
 import 'local_store.dart';
@@ -9,6 +13,7 @@ Future<void> showDramaActions(
   BuildContext context, {
   required Drama drama,
   required LocalStore store,
+  required AppRepository repository,
   VoidCallback? onContinue,
   VoidCallback? onDownload,
   VoidCallback? onSelect,
@@ -17,6 +22,8 @@ Future<void> showDramaActions(
   final epoch = store.profileEpoch;
   final following = store.following(drama.id);
   final choices = <(String, String, IconData)>[
+    if (AppLayout.isTelevision(context))
+      ('details', '查看详情', Icons.info_outline_rounded),
     if (onContinue != null && store.watched(drama.id) != null)
       ('continue', '继续观看', Icons.play_arrow_rounded),
     ('favorite', following == null ? '加入追剧' : '取消追剧', Icons.bookmark_outline),
@@ -45,18 +52,30 @@ Future<void> showDramaActions(
       title: Text(drama.title, maxLines: 2, overflow: TextOverflow.ellipsis),
       children: [
         for (final entry in choices.indexed)
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(context, entry.$2.$1),
-            child: Row(
-              children: [
-                Icon(entry.$2.$3, size: 22),
-                const SizedBox(width: 14),
-                Expanded(child: Text(entry.$2.$2)),
-                if (entry.$2.$1 == 'status:${following?.status.name}')
-                  const Icon(Icons.check_rounded, size: 20),
-              ],
+          if (AppLayout.isTelevision(context))
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+              child: RemoteButton(
+                label: entry.$2.$2,
+                icon: entry.$2.$3,
+                autofocus: entry.$1 == 0,
+                maxLines: 2,
+                onPressed: () => Navigator.pop(context, entry.$2.$1),
+              ),
+            )
+          else
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(context, entry.$2.$1),
+              child: Row(
+                children: [
+                  Icon(entry.$2.$3, size: 22),
+                  const SizedBox(width: 14),
+                  Expanded(child: Text(entry.$2.$2)),
+                  if (entry.$2.$1 == 'status:${following?.status.name}')
+                    const Icon(Icons.check_rounded, size: 20),
+                ],
+              ),
             ),
-          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(24, 10, 24, 8),
           child: Text(
@@ -81,6 +100,13 @@ Future<void> showDramaActions(
     return;
   }
   switch (choice) {
+    case 'details':
+      await Navigator.of(context).push<void>(
+        MaterialPageRoute(
+          builder: (_) =>
+              DetailScreen(drama: drama, repository: repository, store: store),
+        ),
+      );
     case 'continue':
       onContinue?.call();
     case 'favorite':

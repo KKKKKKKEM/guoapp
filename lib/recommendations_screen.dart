@@ -8,6 +8,9 @@ import 'local_store.dart';
 import 'models.dart';
 import 'playback_launch_screen.dart';
 import 'widgets.dart';
+import 'app_layout.dart';
+import 'remote_widgets.dart';
+import 'drama_actions.dart';
 
 class RecommendationsScreen extends StatefulWidget {
   const RecommendationsScreen({
@@ -112,6 +115,56 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     _load();
   }
 
+  Widget _tile(Drama drama, {FocusNode? node, VoidCallback? onFocus}) =>
+      DramaTile(
+        key: ValueKey(drama.id),
+        drama: drama,
+        repository: widget.repository,
+        focusNode: node,
+        onFocus: onFocus,
+        onTap: () async {
+          await openPlaybackDirectly(
+            context,
+            drama: drama,
+            repository: widget.repository,
+            store: widget.store,
+          );
+          if (mounted && node?.context != null) node!.requestFocus();
+        },
+        onMore: () => showDramaActions(
+          context,
+          drama: drama,
+          store: widget.store,
+          repository: widget.repository,
+        ),
+      );
+
+  Widget _remoteGrid(BuildContext context, BoxConstraints constraints) {
+    final columns = ((constraints.maxWidth - 48) / 200).floor().clamp(1, 7);
+    final width = (constraints.maxWidth - 48 - (columns - 1) * 20) / columns;
+    return RemoteGrid(
+      key: ValueKey('recommendations-tv-$_genre'),
+      controller: _scroll,
+      itemKeys: _items.map((item) => item.id).toList(),
+      columns: columns,
+      spacing: 20,
+      padding: const EdgeInsets.all(24),
+      itemExtent: DramaTile.extentFor(context, width - 14) + 14,
+      footer: Center(
+        child: RemoteButton(
+          label: _more
+              ? '正在加载…'
+              : _hasMore
+              ? '继续推荐'
+              : '刷新推荐',
+          onPressed: () => _load(more: _hasMore, force: !_hasMore),
+        ),
+      ),
+      itemBuilder: (_, index, node, onFocus) =>
+          _tile(_items[index], node: node, onFocus: onFocus),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final refresh = RefreshAction(
@@ -174,64 +227,61 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
                   onRetry: () => _load(force: true),
                 )
               : LayoutBuilder(
-                  builder: (context, constraints) => RefreshIndicator(
-                    onRefresh: () => _load(force: true),
-                    child: CustomScrollView(
-                      controller: _scroll,
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      slivers: [
-                        SliverPadding(
-                          padding: const EdgeInsets.all(16),
-                          sliver: SliverGrid(
-                            gridDelegate: dramaGridDelegate(
-                              context,
-                              constraints.maxWidth - 32,
-                            ),
-                            delegate: SliverChildBuilderDelegate((
-                              context,
-                              index,
-                            ) {
-                              final drama = _items[index];
-                              return DramaTile(
-                                key: ValueKey(drama.id),
-                                drama: drama,
-                                repository: widget.repository,
-                                onTap: () => unawaited(
-                                  openPlaybackDirectly(
+                  builder: (context, constraints) =>
+                      AppLayout.isTelevision(context)
+                      ? _remoteGrid(context, constraints)
+                      : RefreshIndicator(
+                          onRefresh: () => _load(force: true),
+                          child: CustomScrollView(
+                            controller: _scroll,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            slivers: [
+                              SliverPadding(
+                                padding: const EdgeInsets.all(16),
+                                sliver: SliverGrid(
+                                  gridDelegate: dramaGridDelegate(
                                     context,
-                                    drama: drama,
-                                    repository: widget.repository,
-                                    store: widget.store,
+                                    constraints.maxWidth - 32,
+                                  ),
+                                  delegate: SliverChildBuilderDelegate((
+                                    context,
+                                    index,
+                                  ) {
+                                    return _tile(_items[index]);
+                                  }, childCount: _items.length),
+                                ),
+                              ),
+                              SliverToBoxAdapter(
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    16,
+                                    0,
+                                    16,
+                                    24,
+                                  ),
+                                  child: Center(
+                                    child: _more
+                                        ? const CircularProgressIndicator()
+                                        : _hasMore
+                                        ? OutlinedButton.icon(
+                                            onPressed: () => _load(more: true),
+                                            icon: const Icon(
+                                              Icons.auto_awesome_rounded,
+                                            ),
+                                            label: const Text('继续推荐'),
+                                          )
+                                        : TextButton(
+                                            onPressed: () => _load(force: true),
+                                            child: const Text(
+                                              '本轮推荐已看完，刷新获取新推荐',
+                                            ),
+                                          ),
                                   ),
                                 ),
-                              );
-                            }, childCount: _items.length),
+                              ),
+                            ],
                           ),
                         ),
-                        SliverToBoxAdapter(
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-                            child: Center(
-                              child: _more
-                                  ? const CircularProgressIndicator()
-                                  : _hasMore
-                                  ? OutlinedButton.icon(
-                                      onPressed: () => _load(more: true),
-                                      icon: const Icon(
-                                        Icons.auto_awesome_rounded,
-                                      ),
-                                      label: const Text('继续推荐'),
-                                    )
-                                  : TextButton(
-                                      onPressed: () => _load(force: true),
-                                      child: const Text('本轮推荐已看完，刷新获取新推荐'),
-                                    ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                 ),
         ),
       ],
@@ -239,7 +289,7 @@ class _RecommendationsScreenState extends State<RecommendationsScreen> {
     if (widget.embedded) return content;
     return Scaffold(
       appBar: AppBar(title: const Text('红果推荐'), actions: [refresh]),
-      body: SafeArea(top: false, child: content),
+      body: TelevisionPageBody(child: SafeArea(top: false, child: content)),
     );
   }
 }

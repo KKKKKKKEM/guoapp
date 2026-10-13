@@ -118,6 +118,9 @@ void main() {
           DuanjuApp(repository: repository, store: store, television: true),
         );
         await tester.pumpAndSettle();
+        focusRemote(tester, find.byKey(const ValueKey('tv-nav-0')));
+        await tester.pumpAndSettle();
+        await press(tester, LogicalKeyboardKey.select);
         if (SourceSite.values.length > 1) {
           final switcher = find.byKey(const ValueKey('source-switch'));
           final title = find
@@ -126,8 +129,18 @@ void main() {
           Focus.of(tester.element(title)).requestFocus();
           await tester.pumpAndSettle();
           await press(tester, LogicalKeyboardKey.select);
-          await press(tester, LogicalKeyboardKey.arrowDown);
-          await press(tester, LogicalKeyboardKey.arrowDown);
+          final choice = find
+              .descendant(
+                of: find.byWidgetPredicate(
+                  (widget) =>
+                      widget is PopupMenuItem<SourceGroup> &&
+                      widget.value?.id == SourceSite.values[1].groupId,
+                ),
+                matching: find.byType(Text),
+              )
+              .first;
+          Focus.of(tester.element(choice)).requestFocus();
+          await tester.pumpAndSettle();
           await press(tester, LogicalKeyboardKey.select);
         }
         expect(
@@ -138,15 +151,9 @@ void main() {
         await tester.pumpAndSettle();
         await press(tester, LogicalKeyboardKey.select);
         expect(repository.detailCalls, 1);
-        expect(find.byKey(const ValueKey('start-play')), findsOneWidget);
-        focusRemote(tester, find.byKey(const ValueKey('episode-1')));
-        await tester.pumpAndSettle();
-        await press(tester, LogicalKeyboardKey.select);
         expect(find.text('这是一集 VIP 内容'), findsOneWidget);
         await press(tester, LogicalKeyboardKey.goBack);
         expect(find.text('这是一集 VIP 内容'), findsNothing);
-        expect(FocusManager.instance.primaryFocus?.debugLabel, 'remote-1');
-        await press(tester, LogicalKeyboardKey.escape);
         expect(
           FocusManager.instance.primaryFocus?.debugLabel,
           'remote-${FixtureRepository.free.id}',
@@ -194,6 +201,8 @@ void main() {
       await press(tester, LogicalKeyboardKey.arrowDown);
       await press(tester, LogicalKeyboardKey.select);
       expect(loaded, 1);
+      await press(tester, LogicalKeyboardKey.arrowUp);
+      expect(FocusManager.instance.primaryFocus?.debugLabel, 'remote-58');
       expect(tester.takeException(), isNull);
     },
   );

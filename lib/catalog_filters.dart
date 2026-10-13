@@ -53,7 +53,7 @@ class _CatalogFiltersState extends State<CatalogFilters> {
     final television = AppLayout.isTelevision(context);
     return SizedBox(
       height: television
-          ? 64
+          ? 72
           : max(52, MediaQuery.textScalerOf(context).scale(14) + 28),
       child: Row(
         children: [

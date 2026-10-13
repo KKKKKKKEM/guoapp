@@ -93,10 +93,12 @@ class DramaCover extends StatelessWidget {
     required this.drama,
     required this.repository,
     this.radius = 14,
+    this.showEpisodeCount = true,
   });
   final Drama drama;
   final AppRepository repository;
   final double radius;
+  final bool showEpisodeCount;
   static const imagesDisabled = bool.fromEnvironment('DISABLE_REMOTE_IMAGES');
 
   @override
@@ -147,13 +149,18 @@ class DramaCover extends StatelessWidget {
               ),
             ),
           ),
-          if (drama.episodes > 0)
+          if (showEpisodeCount && drama.episodes > 0)
             Positioned(
               left: 9,
               bottom: 9,
               child: Text(
                 '共 ${drama.episodes} 集',
-                style: const TextStyle(color: Colors.white, fontSize: 12),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: AppLayout.isTelevision(context)
+                      ? TelevisionStyle.secondary
+                      : 12,
+                ),
               ),
             ),
           if (drama.vip)
@@ -166,11 +173,11 @@ class DramaCover extends StatelessWidget {
                   color: const Color(0xFFF6C86B),
                   borderRadius: BorderRadius.circular(6),
                 ),
-                child: const Text(
+                child: Text(
                   'VIP',
                   style: TextStyle(
-                    color: Color(0xFF40300D),
-                    fontSize: 11,
+                    color: const Color(0xFF40300D),
+                    fontSize: AppLayout.isTelevision(context) ? 16 : 11,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -349,13 +356,13 @@ class DramaTile extends StatelessWidget {
   static double titleHeight(BuildContext context) =>
       MediaQuery.textScalerOf(
         context,
-      ).scale(AppLayout.isTelevision(context) ? 17 : 14) *
+      ).scale(AppLayout.isTelevision(context) ? TelevisionStyle.body : 14) *
       2.6;
 
   static double subtitleHeight(BuildContext context) =>
-      MediaQuery.textScalerOf(
-        context,
-      ).scale(AppLayout.isTelevision(context) ? 14 : 12) *
+      MediaQuery.textScalerOf(context).scale(
+        AppLayout.isTelevision(context) ? TelevisionStyle.secondary : 12,
+      ) *
       1.3;
 
   static double extentFor(BuildContext context, double width) =>
@@ -393,15 +400,15 @@ class DramaTile extends StatelessWidget {
                         badge!,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           color: Colors.white,
-                          fontSize: 12,
+                          fontSize: television ? TelevisionStyle.secondary : 12,
                         ),
                       ),
                     ),
                   ),
                 ),
-              if (actions != null && selected == null)
+              if (!television && actions != null && selected == null)
                 Positioned(top: 2, right: 2, child: actions!),
               if (selected != null)
                 Positioned(
@@ -436,7 +443,7 @@ class DramaTile extends StatelessWidget {
               style: TextStyle(
                 fontWeight: FontWeight.w600,
                 height: 1.3,
-                fontSize: television ? 17 : 14,
+                fontSize: television ? TelevisionStyle.body : 14,
               ),
             ),
           ),
@@ -451,7 +458,7 @@ class DramaTile extends StatelessWidget {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                fontSize: television ? 14 : 12,
+                fontSize: television ? TelevisionStyle.secondary : 12,
                 height: 1.3,
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -463,12 +470,17 @@ class DramaTile extends StatelessWidget {
     if (television) {
       return CallbackShortcuts(
         bindings: {
-          const SingleActivator(LogicalKeyboardKey.contextMenu): ?onMore,
+          const SingleActivator(
+            LogicalKeyboardKey.contextMenu,
+            includeRepeats: false,
+          ): ?onMore,
         },
         child: RemoteTarget(
+          focusScale: 1.04,
           focusNode: focusNode,
           onFocus: onFocus,
           onPressed: onTap,
+          onLongPress: onMore,
           selected: selected ?? false,
           label:
               '${drama.title}，${drama.episodes}集${badge == null ? '' : '，$badge'}',

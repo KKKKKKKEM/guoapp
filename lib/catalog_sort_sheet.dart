@@ -1,16 +1,13 @@
 import 'package:flutter/material.dart';
 
 import 'catalog_sort.dart';
+import 'app_layout.dart';
 
 Future<CatalogView?> chooseCatalogView(
   BuildContext context,
   CatalogView current,
-) => showModalBottomSheet<CatalogView>(
-  context: context,
-  showDragHandle: true,
-  isScrollControlled: true,
-  useSafeArea: true,
-  builder: (context) {
+) {
+  Widget content(BuildContext context) {
     var selected = current;
     return StatefulBuilder(
       builder: (context, update) => SingleChildScrollView(
@@ -33,6 +30,8 @@ Future<CatalogView?> chooseCatalogView(
                 for (final sort in CatalogSort.values)
                   ChoiceChip(
                     label: Text(sort.label),
+                    autofocus:
+                        AppLayout.isTelevision(context) && sort == current.sort,
                     selected: selected.sort == sort,
                     onSelected: (_) =>
                         update(() => selected = selected.copyWith(sort: sort)),
@@ -78,5 +77,37 @@ Future<CatalogView?> chooseCatalogView(
         ),
       ),
     );
-  },
-);
+  }
+
+  if (AppLayout.isTelevision(context)) {
+    return showDialog<CatalogView>(
+      context: context,
+      builder: (context) => Dialog(
+        child: SizedBox(
+          width: 760,
+          height: MediaQuery.sizeOf(context).height * .8,
+          child: Column(
+            children: [
+              Align(
+                alignment: Alignment.centerRight,
+                child: IconButton(
+                  tooltip: '关闭排序与筛选',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ),
+              Expanded(child: content(context)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  return showModalBottomSheet<CatalogView>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: content,
+  );
+}

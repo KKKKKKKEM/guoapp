@@ -8,15 +8,16 @@ import 'package:path_provider/path_provider.dart';
 
 import 'core_bridge.dart';
 import 'app_theme.dart';
+import 'app_layout.dart';
 import 'background_downloads.dart';
 import 'local_store.dart';
 import 'profiles_screen.dart';
-import 'app_build.dart';
 import 'sources_screen.dart';
 import 'widgets.dart';
 import 'resource_settings_screen.dart';
 import 'lan_screen.dart';
 import 'diary_service.dart';
+import 'remote_widgets.dart';
 
 String storageSize(int bytes) {
   if (bytes < 0) return '暂不可用';
@@ -42,6 +43,34 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _busy = false;
   String? _message;
+  int _section = 0;
+  final _sections = List.generate(
+    5,
+    (index) => FocusNode(debugLabel: 'tv-settings-section-$index'),
+  );
+  final _content = FocusScopeNode(debugLabel: 'tv-settings-content');
+
+  @override
+  void dispose() {
+    for (final node in _sections) {
+      node.dispose();
+    }
+    _content.dispose();
+    super.dispose();
+  }
+
+  void _chooseSection(int index) {
+    setState(() => _section = index);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _content.requestFocus();
+        _content.nextFocus();
+      }
+    });
+  }
+
+  bool _showSection(int index) =>
+      !AppLayout.isTelevision(context) || _section == index;
 
   Future<void> _chooseTheme() async {
     final selected = await showDialog<String>(
@@ -58,6 +87,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 for (final mode in ['light', 'dark', 'system'])
                   RadioListTile<String>(
                     value: mode,
+                    autofocus:
+                        AppLayout.isTelevision(context) &&
+                        mode == widget.store.themeMode,
                     title: Text(AppTheme.label(mode)),
                     subtitle: mode == 'system'
                         ? const Text('随设备的深色模式自动切换')
@@ -137,164 +169,248 @@ class _SettingsScreenState extends State<SettingsScreen> {
     animation: widget.store,
     builder: (_, _) => Scaffold(
       appBar: AppBar(title: const Text('设置与备份')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: ListView(
-            padding: const EdgeInsets.all(16),
-            children: [
-              ListTile(
-                key: const ValueKey('lan-settings'),
-                leading: const Icon(Icons.devices_rounded),
-                title: const Text('设备互联'),
-                subtitle: const Text('局域网自动同步追剧与推送播放'),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => openLanSync(context),
-              ),
-              if (widget.repository.supportsSourceManagement)
-                ListTile(
-                  leading: const Icon(Icons.dns_outlined),
-                  title: const Text('站源管理'),
-                  subtitle: const Text('独立更新、连接与播放检测'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => SourcesScreen(
-                        repository: widget.repository,
-                        store: widget.store,
-                      ),
+      body: TelevisionPageBody(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: AppLayout.isTelevision(context) ? 1200 : 720,
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (AppLayout.isTelevision(context))
+                  SizedBox(
+                    width: 220,
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(0, 16, 20, 16),
+                      children: [
+                        for (final section in [
+                          (0, '界面与用户'),
+                          (1, '播放'),
+                          if (widget.store.canDownload ||
+                              widget.store.profile.admin)
+                            (2, '下载与存储'),
+                          (3, '网络与站源'),
+                          if (widget.store.profile.admin) (4, '备份'),
+                        ])
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: RemoteButton(
+                              key: ValueKey(
+                                'tv-settings-section-${section.$1}',
+                              ),
+                              focusNode: _sections[section.$1],
+                              label: section.$2,
+                              selected: _section == section.$1,
+                              autofocus: section.$1 == 0,
+                              icon: _section == section.$1
+                                  ? Icons.check_rounded
+                                  : null,
+                              onPressed: () => _chooseSection(section.$1),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
-                ),
-              ListTile(
-                key: const ValueKey('theme-setting'),
-                leading: const Icon(Icons.palette_outlined),
-                title: const Text('外观主题'),
-                subtitle: Text(AppTheme.label(widget.store.themeMode)),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: _chooseTheme,
-              ),
-              ListTile(
-                leading: const Icon(Icons.people_outline),
-                title: const Text('用户管理'),
-                subtitle: Text('当前：${widget.store.profile.name}'),
-                onTap: () => Navigator.push(
-                  context,
-                  MaterialPageRoute<void>(
-                    builder: (_) => ProfilesScreen(store: widget.store),
-                  ),
-                ),
-              ),
-              ListTile(
-                key: const ValueKey('diary-setting'),
-                leading: const Icon(Icons.receipt_long_rounded),
-                title: const Text('播放调试日记'),
-                subtitle: const Text('查看并复制应用运行与播放器的详细事件日志'),
-                trailing: const Icon(Icons.chevron_right_rounded),
-                onTap: () => DiaryService.showDiaryDialog(context),
-              ),
-              if (widget.store.canDownload)
-                ListTile(
-                  leading: const Icon(Icons.download_outlined),
-                  title: const Text('下载偏好'),
-                  subtitle: Text(widget.store.downloadPreferences.qualityLabel),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) =>
-                          DownloadPreferencesScreen(store: widget.store),
+                Expanded(
+                  child: FocusScope(
+                    node: _content,
+                    onKeyEvent: (_, event) {
+                      if (AppLayout.isTelevision(context) &&
+                          event is KeyDownEvent &&
+                          event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+                        _sections[_section].requestFocus();
+                        return KeyEventResult.handled;
+                      }
+                      return KeyEventResult.ignored;
+                    },
+                    child: ListView(
+                      padding: const EdgeInsets.all(16),
+                      children: [
+                        if (_showSection(3)) ...[
+                          ListTile(
+                            key: const ValueKey('lan-settings'),
+                            leading: const Icon(Icons.devices_rounded),
+                            title: const Text('设备互联'),
+                            subtitle: const Text('局域网自动同步追剧与推送播放'),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: () => openLanSync(context),
+                          ),
+                          if (widget.repository.supportsSourceManagement)
+                            ListTile(
+                              leading: const Icon(Icons.dns_outlined),
+                              title: const Text('站源管理'),
+                              subtitle: const Text('独立更新、连接与播放检测'),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => SourcesScreen(
+                                    repository: widget.repository,
+                                    store: widget.store,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                        if (_showSection(0)) ...[
+                          ListTile(
+                            key: const ValueKey('theme-setting'),
+                            leading: const Icon(Icons.palette_outlined),
+                            title: const Text('外观主题'),
+                            subtitle: Text(
+                              AppTheme.label(widget.store.themeMode),
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: _chooseTheme,
+                          ),
+                          ListTile(
+                            leading: const Icon(Icons.people_outline),
+                            title: const Text('用户管理'),
+                            subtitle: Text('当前：${widget.store.profile.name}'),
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute<void>(
+                                builder: (_) =>
+                                    ProfilesScreen(store: widget.store),
+                              ),
+                            ),
+                          ),
+                        ],
+                        if (_showSection(1))
+                          ListTile(
+                            key: const ValueKey('diary-setting'),
+                            leading: const Icon(Icons.receipt_long_rounded),
+                            title: const Text('播放调试日记'),
+                            subtitle: const Text('查看并复制应用运行与播放器的详细事件日志'),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: () => DiaryService.showDiaryDialog(context),
+                          ),
+                        if (_showSection(2) && widget.store.canDownload)
+                          ListTile(
+                            leading: const Icon(Icons.download_outlined),
+                            title: const Text('下载偏好'),
+                            subtitle: Text(
+                              widget.store.downloadPreferences.qualityLabel,
+                            ),
+                            trailing: const Icon(Icons.chevron_right_rounded),
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute<void>(
+                                builder: (_) => DownloadPreferencesScreen(
+                                  store: widget.store,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (_showSection(2) && widget.store.canDownload)
+                          ListTile(
+                            leading: const Icon(Icons.folder_outlined),
+                            title: const Text('下载目录与空间'),
+                            subtitle: const Text('查看存储用量、迁移已下载文件'),
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute<void>(
+                                builder: (_) => StorageScreen(
+                                  repository: widget.repository,
+                                  store: widget.store,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (widget.store.profile.admin) ...[
+                          if (_showSection(3))
+                            ListTile(
+                              leading: const Icon(
+                                Icons.settings_ethernet_rounded,
+                              ),
+                              title: const Text('网络与资源'),
+                              subtitle: const Text('代理、目录请求间隔、下载并发与站源目录'),
+                              trailing: const Icon(Icons.chevron_right_rounded),
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute<void>(
+                                  builder: (_) => ResourceSettingsScreen(
+                                    repository: widget.repository,
+                                    store: widget.store,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          if (_showSection(2)) ...[
+                            SwitchListTile(
+                              value: widget.store.autoExport,
+                              title: const Text('下载完成后自动导出 Emby'),
+                              subtitle: const Text(
+                                '在下载目录的 exports 中生成视频和海报 URL 元数据，可将该目录加入 Emby 媒体库。',
+                              ),
+                              onChanged: _busy
+                                  ? null
+                                  : (value) async {
+                                      try {
+                                        if (value) {
+                                          await BackgroundDownloads.ensureStarted();
+                                        }
+                                        await widget.store.setAutoExport(value);
+                                      } catch (error) {
+                                        if (mounted) {
+                                          setState(
+                                            () => _message = error.toString(),
+                                          );
+                                        }
+                                      }
+                                    },
+                            ),
+                            SwitchListTile(
+                              value: widget.store.exportPosters,
+                              title: const Text('同时导出海报文件'),
+                              subtitle: const Text(
+                                '默认只写海报 URL。源站海报需要解密或外部读取失败时可开启。',
+                              ),
+                              onChanged: _busy
+                                  ? null
+                                  : (value) => saveUserChange(
+                                      context,
+                                      () =>
+                                          widget.store.setExportPosters(value),
+                                    ),
+                            ),
+                          ],
+                          if (_showSection(4)) ...[
+                            ListTile(
+                              leading: const Icon(Icons.backup_outlined),
+                              title: const Text('导出配置备份'),
+                              subtitle: const Text('包含本地用户、追剧、历史和设置，不含视频文件'),
+                              onTap: _busy ? null : () => _backup(false),
+                            ),
+                            ListTile(
+                              leading: const Icon(Icons.restore),
+                              title: const Text('恢复配置备份'),
+                              onTap: _busy ? null : () => _backup(true),
+                            ),
+                          ],
+                        ],
+                        if (Platform.isIOS)
+                          const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'iOS 下载和媒体处理需要保持应用在前台；切到后台会暂停，回到前台后可继续。',
+                            ),
+                          ),
+                        if (_busy) const LinearProgressIndicator(),
+                        if (_message != null)
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: AppLayout.isTelevision(context)
+                                ? Text(_message!)
+                                : SelectableText(_message!),
+                          ),
+                      ],
                     ),
                   ),
-                ),
-              if (widget.store.canDownload)
-                ListTile(
-                  leading: const Icon(Icons.folder_outlined),
-                  title: const Text('下载目录与空间'),
-                  subtitle: const Text('查看存储用量、迁移已下载文件'),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => StorageScreen(
-                        repository: widget.repository,
-                        store: widget.store,
-                      ),
-                    ),
-                  ),
-                ),
-              if (widget.store.profile.admin) ...[
-                ListTile(
-                  leading: const Icon(Icons.settings_ethernet_rounded),
-                  title: const Text('网络与资源'),
-                  subtitle: const Text('代理、目录请求间隔、下载并发与站源目录'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute<void>(
-                      builder: (_) => ResourceSettingsScreen(
-                        repository: widget.repository,
-                        store: widget.store,
-                      ),
-                    ),
-                  ),
-                ),
-                SwitchListTile(
-                  value: widget.store.autoExport,
-                  title: const Text('下载完成后自动导出 Emby'),
-                  subtitle: const Text(
-                    '在下载目录的 exports 中生成视频和海报 URL 元数据，可将该目录加入 Emby 媒体库。',
-                  ),
-                  onChanged: _busy
-                      ? null
-                      : (value) async {
-                          try {
-                            if (value) {
-                              await BackgroundDownloads.ensureStarted();
-                            }
-                            await widget.store.setAutoExport(value);
-                          } catch (error) {
-                            if (mounted) {
-                              setState(() => _message = error.toString());
-                            }
-                          }
-                        },
-                ),
-                SwitchListTile(
-                  value: widget.store.exportPosters,
-                  title: const Text('同时导出海报文件'),
-                  subtitle: const Text('默认只写海报 URL。源站海报需要解密或外部读取失败时可开启。'),
-                  onChanged: _busy
-                      ? null
-                      : (value) => saveUserChange(
-                          context,
-                          () => widget.store.setExportPosters(value),
-                        ),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.backup_outlined),
-                  title: const Text('导出配置备份'),
-                  subtitle: const Text('包含本地用户、追剧、历史和设置，不含视频文件'),
-                  onTap: _busy ? null : () => _backup(false),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.restore),
-                  title: const Text('恢复配置备份'),
-                  onTap: _busy ? null : () => _backup(true),
                 ),
               ],
-              if (Platform.isIOS)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Text('iOS 下载和媒体处理需要保持应用在前台；切到后台会暂停，回到前台后可继续。'),
-                ),
-              if (_busy) const LinearProgressIndicator(),
-              if (_message != null)
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: SelectableText(_message!),
-                ),
-            ],
+            ),
           ),
         ),
       ),
@@ -411,57 +527,62 @@ class _StorageScreenState extends State<StorageScreen> {
     canPop: !_busy,
     child: Scaffold(
       appBar: AppBar(title: const Text('下载目录与空间')),
-      body: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 720),
-          child: ListView(
-            padding: const EdgeInsets.all(20),
-            children: [
-              if (_info != null) ...[
-                Text(
-                  '已使用 ${storageSize((_info!['bytes'] as num?)?.toInt() ?? 0)}',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '剩余 ${storageSize((_info!['free'] as num?)?.toInt() ?? -1)} · ${_info!['files'] ?? 0} 个文件',
-                ),
-                const SizedBox(height: 24),
-                const Text('当前下载目录'),
-                const SizedBox(height: 8),
-                SelectableText(_info!['directory'] as String? ?? ''),
-                TextButton.icon(
-                  onPressed: () => Clipboard.setData(
-                    ClipboardData(text: _info!['directory'] as String? ?? ''),
+      body: TelevisionPageBody(
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 720),
+            child: ListView(
+              padding: const EdgeInsets.all(20),
+              children: [
+                if (_info != null) ...[
+                  Text(
+                    '已使用 ${storageSize((_info!['bytes'] as num?)?.toInt() ?? 0)}',
+                    style: Theme.of(context).textTheme.headlineSmall,
                   ),
-                  icon: const Icon(Icons.copy),
-                  label: const Text('复制路径'),
+                  const SizedBox(height: 8),
+                  Text(
+                    '剩余 ${storageSize((_info!['free'] as num?)?.toInt() ?? -1)} · ${_info!['files'] ?? 0} 个文件',
+                  ),
+                  const SizedBox(height: 24),
+                  const Text('当前下载目录'),
+                  const SizedBox(height: 8),
+                  if (AppLayout.isTelevision(context))
+                    Text(_info!['directory'] as String? ?? '')
+                  else
+                    SelectableText(_info!['directory'] as String? ?? ''),
+                  TextButton.icon(
+                    onPressed: () => Clipboard.setData(
+                      ClipboardData(text: _info!['directory'] as String? ?? ''),
+                    ),
+                    icon: const Icon(Icons.copy),
+                    label: const Text('复制路径'),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text('在下载页删除不需要的分集，在本地媒体页删除合并成品或 Emby 导出，可释放空间。'),
+                ],
+                if (_busy || (_info == null && _error == null))
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 20),
+                    child: LinearProgressIndicator(),
+                  ),
+                if (_busy) const Text('正在迁移，请保持应用运行…'),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                    child: Text(_error!),
+                  ),
+                if (widget.store.profile.admin)
+                  FilledButton.icon(
+                    onPressed: _busy ? null : _move,
+                    icon: const Icon(Icons.drive_file_move_outline),
+                    label: const Text('更改并迁移目录'),
+                  ),
+                TextButton(
+                  onPressed: _busy ? null : _refresh,
+                  child: const Text('刷新用量'),
                 ),
-                const SizedBox(height: 20),
-                const Text('在下载页删除不需要的分集，在本地媒体页删除合并成品或 Emby 导出，可释放空间。'),
               ],
-              if (_busy || (_info == null && _error == null))
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
-                  child: LinearProgressIndicator(),
-                ),
-              if (_busy) const Text('正在迁移，请保持应用运行…'),
-              if (_error != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  child: Text(_error!),
-                ),
-              if (widget.store.profile.admin)
-                FilledButton.icon(
-                  onPressed: _busy ? null : _move,
-                  icon: const Icon(Icons.drive_file_move_outline),
-                  label: const Text('更改并迁移目录'),
-                ),
-              TextButton(
-                onPressed: _busy ? null : _refresh,
-                child: const Text('刷新用量'),
-              ),
-            ],
+            ),
           ),
         ),
       ),

@@ -6,6 +6,8 @@ import 'package:flutter/widgets.dart';
 
 import 'app_layout.dart';
 
+enum PlaybackOrientation { automatic, portrait, landscape }
+
 class AppOrientationController {
   AppOrientationController({required bool television})
     : _television = television;
@@ -22,8 +24,13 @@ class AppOrientationController {
     required bool television,
     bool fullscreen = false,
     double aspectRatio = 1,
+    PlaybackOrientation orientation = PlaybackOrientation.automatic,
   }) {
-    if (television || fullscreen && aspectRatio >= 1) {
+    if (television ||
+        fullscreen &&
+            (orientation == PlaybackOrientation.landscape ||
+                orientation == PlaybackOrientation.automatic &&
+                    aspectRatio >= 1)) {
       return const [
         DeviceOrientation.landscapeLeft,
         DeviceOrientation.landscapeRight,
@@ -51,6 +58,7 @@ class AppOrientationController {
     Object owner, {
     required bool fullscreen,
     required double aspectRatio,
+    PlaybackOrientation orientation = PlaybackOrientation.automatic,
   }) async {
     final previousOwner = _playbackOwner;
     final previousOrientations = _playbackOrientations;
@@ -60,6 +68,7 @@ class AppOrientationController {
         television: false,
         fullscreen: fullscreen,
         aspectRatio: aspectRatio,
+        orientation: orientation,
       );
     }
     final requested = _playbackOrientations;
@@ -96,6 +105,7 @@ class AppOrientationController {
         return;
       }
       final television = _television;
+      final wasTelevision = _nativeTelevision == true;
       if (defaultTargetPlatform == TargetPlatform.android &&
           (force || _nativeTelevision != television)) {
         try {
@@ -108,6 +118,12 @@ class AppOrientationController {
         }
       }
       if (_disposed || television != _television) return;
+      if (defaultTargetPlatform == TargetPlatform.android &&
+          (television || wasTelevision)) {
+        await SystemChrome.setEnabledSystemUIMode(
+          television ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
+        );
+      }
       final preferred = television
           ? orientations(television: true)
           : _playbackOrientations;

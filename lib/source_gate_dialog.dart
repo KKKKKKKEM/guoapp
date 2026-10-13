@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'local_store.dart';
+import 'adaptive_text_field.dart';
 import 'models.dart';
 
 /// 站源密码锁弹窗：启用 / 关闭密码功能，以及解锁 / 重新锁定隐藏站源。
@@ -97,8 +98,9 @@ class _SourceGateDialogState extends State<SourceGateDialog> {
                 ),
                 if (admin) ...[
                   const SizedBox(height: 16),
-                  TextField(
+                  AdaptiveTextField(
                     controller: _pin,
+                    enabled: !_busy,
                     autofocus: true,
                     obscureText: true,
                     keyboardType: TextInputType.number,
@@ -107,8 +109,9 @@ class _SourceGateDialogState extends State<SourceGateDialog> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AdaptiveTextField(
                     controller: _confirm,
+                    enabled: !_busy,
                     obscureText: true,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: '再次输入密码'),
@@ -128,8 +131,9 @@ class _SourceGateDialogState extends State<SourceGateDialog> {
                 if (!admin)
                   const Text('只有管理员用户可以启用或关闭密码功能。')
                 else ...[
-                  TextField(
+                  AdaptiveTextField(
                     controller: _pin,
+                    enabled: !_busy,
                     autofocus: true,
                     obscureText: true,
                     keyboardType: TextInputType.number,
@@ -138,8 +142,9 @@ class _SourceGateDialogState extends State<SourceGateDialog> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextField(
+                  AdaptiveTextField(
                     controller: _confirm,
+                    enabled: !_busy,
                     obscureText: true,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: '再次输入密码'),
@@ -148,8 +153,9 @@ class _SourceGateDialogState extends State<SourceGateDialog> {
               ] else if (!store.sourcesUnlocked) ...[
                 const Text('隐藏的站源已锁定，输入密码后显示。'),
                 const SizedBox(height: 16),
-                TextField(
+                AdaptiveTextField(
                   controller: _pin,
+                  enabled: !_busy,
                   autofocus: true,
                   obscureText: true,
                   keyboardType: TextInputType.number,

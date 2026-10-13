@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'models.dart';
 import 'download_preferences.dart';
 import 'episode_browser.dart';
+import 'app_layout.dart';
 
 class DownloadSelection {
   const DownloadSelection(this.episodes, this.quality);
@@ -124,7 +125,9 @@ class _DownloadPickerState extends State<DownloadPicker> {
                       '已选 ${_selected.length}',
                       style: TextStyle(
                         color: Theme.of(context).colorScheme.onSurfaceVariant,
-                        fontSize: 12,
+                        fontSize: AppLayout.isTelevision(context)
+                            ? TelevisionStyle.secondary
+                            : 12,
                       ),
                     ),
                   ],
@@ -191,7 +194,9 @@ class _DownloadPickerState extends State<DownloadPicker> {
                   '保存源站原始视频；指定画质不可用时自动使用可用版本。',
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    fontSize: 12,
+                    fontSize: AppLayout.isTelevision(context)
+                        ? TelevisionStyle.secondary
+                        : 12,
                   ),
                 ),
               ),
@@ -207,7 +212,9 @@ class _DownloadPickerState extends State<DownloadPicker> {
                     '已选 VIP 集可能只能下载试看内容。',
                     style: TextStyle(
                       color: Theme.of(context).colorScheme.tertiary,
-                      fontSize: 12,
+                      fontSize: AppLayout.isTelevision(context)
+                          ? TelevisionStyle.secondary
+                          : 12,
                     ),
                   ),
                 ),
@@ -258,7 +265,7 @@ class _DownloadPickerState extends State<DownloadPicker> {
         title: const Text('下载选集'),
         automaticallyImplyLeading: true,
       ),
-      body: content,
+      body: TelevisionPageBody(child: content),
     );
   }
 }

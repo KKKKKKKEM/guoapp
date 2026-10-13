@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'lan_controller.dart';
+import 'adaptive_text_field.dart';
+import 'app_layout.dart';
 import 'local_store.dart';
 import 'widgets.dart';
 
@@ -22,7 +24,7 @@ Future<T?> _lanPanel<T>(
 }) {
   final size = MediaQuery.sizeOf(context);
   final height = min(size.height * .88, maxHeight);
-  if (size.width >= 800) {
+  if (AppLayout.isTelevision(context) || size.width >= 800) {
     return showDialog<T>(
       context: context,
       barrierDismissible: dismissible,
@@ -120,7 +122,7 @@ class _LanSyncScreenState extends State<LanSyncScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('设备名称'),
-        content: TextField(
+        content: AdaptiveTextField(
           controller: name,
           maxLength: 60,
           autofocus: true,
@@ -191,235 +193,253 @@ class _LanSyncScreenState extends State<LanSyncScreen> {
           !_busy && !_cancelling && !link.syncing && !link.store.locked;
       return Scaffold(
         appBar: AppBar(title: const Text('追剧同步')),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-              children: [
-                Card(
-                  child: Column(
-                    children: [
-                      SwitchListTile.adaptive(
-                        key: const ValueKey('lan-enabled'),
-                        title: const Text('设备互联'),
-                        subtitle: const Text('同一局域网直连，接收端无需点击确认'),
-                        value: link.enabled,
-                        onChanged: _busy || link.store.locked
-                            ? null
-                            : (value) => _perform(() => link.setEnabled(value)),
-                      ),
-                      ListTile(
-                        leading: Icon(lanDeviceIcon(link.kind)),
-                        title: Text(link.deviceName),
-                        subtitle: Text('本机用户 · ' + link.store.profile.name),
-                        trailing: IconButton(
-                          tooltip: '修改设备名称',
-                          onPressed: _busy ? null : _rename,
-                          icon: const Icon(Icons.edit_outlined),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      ListTile(
-                        leading: Icon(
-                          remote == null
-                              ? Icons.devices_rounded
-                              : lanDeviceIcon(remote.peer.kind),
-                        ),
-                        title: Text(
-                          remote?.peer.name ?? link.connectionLabel,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          remote == null
-                              ? '仅发现一台设备时自动连接，多台时由发起端选择'
-                              : '对方用户 · ' + remote.user,
-                        ),
-                        trailing: remote == null
-                            ? null
-                            : PopupMenuButton<String>(
-                                tooltip: '设备操作',
-                                onSelected: (value) => _perform(
-                                  () => value == 'forget'
-                                      ? link.forget(remote.peer)
-                                      : link.disconnect(),
-                                ),
-                                itemBuilder: (_) => const [
-                                  PopupMenuItem(
-                                    value: 'disconnect',
-                                    child: Text('断开连接'),
-                                  ),
-                                  PopupMenuItem(
-                                    value: 'forget',
-                                    child: Text('忘记配对'),
-                                  ),
-                                ],
-                              ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                        child: OutlinedButton.icon(
-                          icon: const Icon(Icons.devices_other_rounded),
-                          label: Text(remote == null ? '选择设备' : '切换设备'),
-                          onPressed: _busy || link.store.locked
-                              ? null
-                              : () => chooseLanDevice(
-                                  context,
-                                  link,
-                                  change: remote != null,
-                                ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Card(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SwitchListTile.adaptive(
-                        key: const ValueKey('lan-auto-sync'),
-                        title: const Text('自动同步'),
-                        subtitle: const Text('同步追剧、观看状态和这些剧目的续播进度'),
-                        value: link.autoSync,
-                        onChanged: controlsEnabled
-                            ? (value) => _perform(() => link.setAutoSync(value))
-                            : null,
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 8,
-                        ),
-                        child: Semantics(
-                          liveRegion: true,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              if (link.syncing) const LinearProgressIndicator(),
-                              const SizedBox(height: 8),
-                              Text(link.syncMessage),
-                              if (link.lastSync != null)
-                                Text(
-                                  '最近同步 · ' +
-                                      MaterialLocalizations.of(
-                                        context,
-                                      ).formatTimeOfDay(
-                                        TimeOfDay.fromDateTime(link.lastSync!),
-                                      ),
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              if (link.lastLocalCount != null)
-                                Text(
-                                  '本机：' + link.lastLocalCount!.label,
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              if (link.lastRemoteCount != null)
-                                Text(
-                                  '对方：' + link.lastRemoteCount!.label,
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                              if (link.skipped > 0)
-                                Text(
-                                  '保留范围外记录：' + link.skipped.toString(),
-                                  style: Theme.of(context).textTheme.bodySmall,
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: FilledButton.icon(
-                          icon: Icon(
-                            link.syncing
-                                ? Icons.close_rounded
-                                : Icons.sync_rounded,
-                          ),
-                          label: Text(link.syncing ? '取消本次同步' : '立即同步'),
-                          onPressed: link.syncing
-                              ? _cancelling
-                                    ? null
-                                    : _cancel
-                              : remote == null || _busy || _cancelling
-                              ? null
-                              : () => _perform(() => link.synchronize()),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                if (conflicts > 0)
+        body: TelevisionPageBody(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+                children: [
                   Card(
-                    child: ListTile(
-                      leading: const Icon(Icons.compare_arrows_rounded),
-                      title: Text('$conflicts 项记录待处理'),
-                      subtitle: const Text('两端同时修改的内容已保留，选择要继续使用的记录'),
-                      trailing: const Icon(Icons.chevron_right_rounded),
-                      onTap: () => Navigator.push(
-                        context,
-                        MaterialPageRoute<void>(
-                          builder: (_) => _LanConflicts(controller: link),
+                    child: Column(
+                      children: [
+                        SwitchListTile.adaptive(
+                          key: const ValueKey('lan-enabled'),
+                          title: const Text('设备互联'),
+                          subtitle: const Text('同一局域网直连，接收端无需点击确认'),
+                          value: link.enabled,
+                          onChanged: _busy || link.store.locked
+                              ? null
+                              : (value) =>
+                                    _perform(() => link.setEnabled(value)),
                         ),
-                      ),
-                    ),
-                  ),
-                ListTile(
-                  leading: const Icon(Icons.sync_alt_rounded),
-                  title: const Text('手动同步'),
-                  subtitle: const Text('双向合并、覆盖对方或覆盖本机'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
-                  enabled: remote != null && controlsEnabled,
-                  onTap: remote != null && controlsEnabled ? _manual : null,
-                ),
-                if (_error ?? link.error case final message?)
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(
-                      message,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ),
-                if (link.discoveryMessage.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Text(link.discoveryMessage),
-                  ),
-                if (link.local != null)
-                  ExpansionTile(
-                    leading: const Icon(Icons.info_outline_rounded),
-                    title: const Text('本机地址与连接帮助'),
-                    childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    children: [
-                      const Text(
-                        '两台设备都需开启设备互联并保持前台。发现失败时，可在另一端输入下列地址；Windows 需允许本应用通过专用网络防火墙。',
-                      ),
-                      for (final address in link.local!.addresses)
                         ListTile(
-                          title: SelectableText(address),
+                          leading: Icon(lanDeviceIcon(link.kind)),
+                          title: Text(link.deviceName),
+                          subtitle: Text('本机用户 · ' + link.store.profile.name),
                           trailing: IconButton(
-                            tooltip: '复制地址',
-                            icon: const Icon(Icons.copy_rounded),
-                            onPressed: () =>
-                                Clipboard.setData(ClipboardData(text: address)),
+                            tooltip: '修改设备名称',
+                            onPressed: _busy ? null : _rename,
+                            icon: const Icon(Icons.edit_outlined),
                           ),
                         ),
-                      if (link.local!.addresses.isEmpty)
-                        const Text('尚未取得局域网地址，请检查 Wi-Fi 或网线连接。'),
-                    ],
+                      ],
+                    ),
                   ),
-              ],
+                  const SizedBox(height: 12),
+                  Card(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        ListTile(
+                          leading: Icon(
+                            remote == null
+                                ? Icons.devices_rounded
+                                : lanDeviceIcon(remote.peer.kind),
+                          ),
+                          title: Text(
+                            remote?.peer.name ?? link.connectionLabel,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            remote == null
+                                ? '仅发现一台设备时自动连接，多台时由发起端选择'
+                                : '对方用户 · ' + remote.user,
+                          ),
+                          trailing: remote == null
+                              ? null
+                              : PopupMenuButton<String>(
+                                  tooltip: '设备操作',
+                                  onSelected: (value) => _perform(
+                                    () => value == 'forget'
+                                        ? link.forget(remote.peer)
+                                        : link.disconnect(),
+                                  ),
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: 'disconnect',
+                                      child: Text('断开连接'),
+                                    ),
+                                    PopupMenuItem(
+                                      value: 'forget',
+                                      child: Text('忘记配对'),
+                                    ),
+                                  ],
+                                ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                          child: OutlinedButton.icon(
+                            icon: const Icon(Icons.devices_other_rounded),
+                            label: Text(remote == null ? '选择设备' : '切换设备'),
+                            onPressed: _busy || link.store.locked
+                                ? null
+                                : () => chooseLanDevice(
+                                    context,
+                                    link,
+                                    change: remote != null,
+                                  ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Card(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SwitchListTile.adaptive(
+                          key: const ValueKey('lan-auto-sync'),
+                          title: const Text('自动同步'),
+                          subtitle: const Text('同步追剧、观看状态和这些剧目的续播进度'),
+                          value: link.autoSync,
+                          onChanged: controlsEnabled
+                              ? (value) =>
+                                    _perform(() => link.setAutoSync(value))
+                              : null,
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 8,
+                          ),
+                          child: Semantics(
+                            liveRegion: true,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (link.syncing)
+                                  const LinearProgressIndicator(),
+                                const SizedBox(height: 8),
+                                Text(link.syncMessage),
+                                if (link.lastSync != null)
+                                  Text(
+                                    '最近同步 · ' +
+                                        MaterialLocalizations.of(
+                                          context,
+                                        ).formatTimeOfDay(
+                                          TimeOfDay.fromDateTime(
+                                            link.lastSync!,
+                                          ),
+                                        ),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                if (link.lastLocalCount != null)
+                                  Text(
+                                    '本机：' + link.lastLocalCount!.label,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                if (link.lastRemoteCount != null)
+                                  Text(
+                                    '对方：' + link.lastRemoteCount!.label,
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                if (link.skipped > 0)
+                                  Text(
+                                    '保留范围外记录：' + link.skipped.toString(),
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: FilledButton.icon(
+                            icon: Icon(
+                              link.syncing
+                                  ? Icons.close_rounded
+                                  : Icons.sync_rounded,
+                            ),
+                            label: Text(link.syncing ? '取消本次同步' : '立即同步'),
+                            onPressed: link.syncing
+                                ? _cancelling
+                                      ? null
+                                      : _cancel
+                                : remote == null || _busy || _cancelling
+                                ? null
+                                : () => _perform(() => link.synchronize()),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (conflicts > 0)
+                    Card(
+                      child: ListTile(
+                        leading: const Icon(Icons.compare_arrows_rounded),
+                        title: Text('$conflicts 项记录待处理'),
+                        subtitle: const Text('两端同时修改的内容已保留，选择要继续使用的记录'),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute<void>(
+                            builder: (_) => _LanConflicts(controller: link),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ListTile(
+                    leading: const Icon(Icons.sync_alt_rounded),
+                    title: const Text('手动同步'),
+                    subtitle: const Text('双向合并、覆盖对方或覆盖本机'),
+                    trailing: const Icon(Icons.chevron_right_rounded),
+                    enabled: remote != null && controlsEnabled,
+                    onTap: remote != null && controlsEnabled ? _manual : null,
+                  ),
+                  if (_error ?? link.error case final message?)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(
+                        message,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ),
+                  if (link.discoveryMessage.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Text(link.discoveryMessage),
+                    ),
+                  if (link.local != null)
+                    ExpansionTile(
+                      leading: const Icon(Icons.info_outline_rounded),
+                      title: const Text('本机地址与连接帮助'),
+                      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                      children: [
+                        const Text(
+                          '两台设备都需开启设备互联并保持前台。发现失败时，可在另一端输入下列地址；Windows 需允许本应用通过专用网络防火墙。',
+                        ),
+                        for (final address in link.local!.addresses)
+                          ListTile(
+                            title: AppLayout.isTelevision(context)
+                                ? Text(address)
+                                : SelectableText(address),
+                            trailing: IconButton(
+                              tooltip: '复制地址',
+                              icon: const Icon(Icons.copy_rounded),
+                              onPressed: () => Clipboard.setData(
+                                ClipboardData(text: address),
+                              ),
+                            ),
+                          ),
+                        if (link.local!.addresses.isEmpty)
+                          const Text('尚未取得局域网地址，请检查 Wi-Fi 或网线连接。'),
+                      ],
+                    ),
+                ],
+              ),
             ),
           ),
         ),
@@ -652,8 +672,9 @@ class _LanDevicesState extends State<_LanDevices> {
                   label: const Text('输入地址连接'),
                 ),
                 if (_manual) ...[
-                  TextField(
+                  AdaptiveTextField(
                     controller: _address,
+                    enabled: !_busy && !link.connecting,
                     autocorrect: false,
                     enableSuggestions: false,
                     decoration: const InputDecoration(
@@ -939,68 +960,72 @@ class _LanConflicts extends StatelessWidget {
                 .toList();
       return Scaffold(
         appBar: AppBar(title: const Text('处理记录冲突')),
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 720),
-            child: records.isEmpty
-                ? const Center(child: Text('没有待处理的冲突'))
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: records.length,
-                    itemBuilder: (context, index) {
-                      final record = records[index];
-                      return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.all(16),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                record.drama.title,
-                                style: Theme.of(context).textTheme.titleMedium,
-                              ),
-                              for (final field in record.fields.entries.where(
-                                (field) => field.value.conflict,
-                              )) ...[
-                                Padding(
-                                  padding: const EdgeInsets.only(
-                                    top: 16,
-                                    bottom: 4,
-                                  ),
-                                  child: Text(switch (field.key) {
-                                    'member' => '追剧列表',
-                                    'status' => '观看状态',
-                                    _ => '续播进度',
-                                  }),
+        body: TelevisionPageBody(
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 720),
+              child: records.isEmpty
+                  ? const Center(child: Text('没有待处理的冲突'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: records.length,
+                      itemBuilder: (context, index) {
+                        final record = records[index];
+                        return Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  record.drama.title,
+                                  style: Theme.of(
+                                    context,
+                                  ).textTheme.titleMedium,
                                 ),
-                                for (final candidate in field.value.values)
-                                  ListTile(
-                                    leading: const Icon(
-                                      Icons.radio_button_unchecked_rounded,
+                                for (final field in record.fields.entries.where(
+                                  (field) => field.value.conflict,
+                                )) ...[
+                                  Padding(
+                                    padding: const EdgeInsets.only(
+                                      top: 16,
+                                      bottom: 4,
                                     ),
-                                    title: Text(
-                                      _value(field.key, candidate.value),
-                                    ),
-                                    subtitle: const Text('使用这条记录'),
-                                    onTap: () =>
-                                        saveUserChange(context, () async {
-                                          await controller.store
-                                              .resolveLanConflict(
-                                                record.id,
-                                                field.key,
-                                                candidate,
-                                                record.hash,
-                                              );
-                                          controller.flush();
-                                        }),
+                                    child: Text(switch (field.key) {
+                                      'member' => '追剧列表',
+                                      'status' => '观看状态',
+                                      _ => '续播进度',
+                                    }),
                                   ),
+                                  for (final candidate in field.value.values)
+                                    ListTile(
+                                      leading: const Icon(
+                                        Icons.radio_button_unchecked_rounded,
+                                      ),
+                                      title: Text(
+                                        _value(field.key, candidate.value),
+                                      ),
+                                      subtitle: const Text('使用这条记录'),
+                                      onTap: () =>
+                                          saveUserChange(context, () async {
+                                            await controller.store
+                                                .resolveLanConflict(
+                                                  record.id,
+                                                  field.key,
+                                                  candidate,
+                                                  record.hash,
+                                                );
+                                            controller.flush();
+                                          }),
+                                    ),
+                                ],
                               ],
-                            ],
+                            ),
                           ),
-                        ),
-                      );
-                    },
-                  ),
+                        );
+                      },
+                    ),
+            ),
           ),
         ),
       );
