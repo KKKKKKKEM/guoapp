@@ -28,11 +28,11 @@ func TestNativeSuggestionsOfficialContract(t *testing.T) {
 				Body: io.NopCloser(strings.NewReader(`{"data":{"suggest_list":[{"name":"永世长青"},{"name":"永冬之下"},{"name":"永世长青"},{"name":" "}]}}`))}, nil
 		})},
 	}}
-	items, err := engine.suggestions(context.Background(), " 永 & 世 ")
+	items, err := engine.suggestions(context.Background(), sourceHongguo, " 永 & 世 ")
 	if err != nil || len(items) != 2 || items[0] != "永世长青" || items[1] != "永冬之下" {
 		t.Fatalf("unexpected suggestions: %v %v", items, err)
 	}
-	if _, err := engine.suggestions(context.Background(), strings.Repeat("永", 101)); err == nil {
+	if _, err := engine.suggestions(context.Background(), sourceHongguo, strings.Repeat("永", 101)); err == nil {
 		t.Fatal("oversized query accepted")
 	}
 }
@@ -50,5 +50,15 @@ func TestNativeSuggestionsAcceptRootAndEmptyResults(t *testing.T) {
 	}
 	if _, err := nativeParseSuggestions([]byte("<html>error</html>")); err == nil {
 		t.Fatal("HTML accepted")
+	}
+}
+
+func TestNativeSuggestionsRejectUnsupportedSourceWithoutNetwork(t *testing.T) {
+	engine := sourceFixtureEngine(t, func(request *http.Request) (*http.Response, error) {
+		t.Fatalf("unsupported suggestions issued a network request: %s", request.URL)
+		return nil, nil
+	})
+	if _, err := engine.suggestions(context.Background(), sourceHuangdou, "合成搜索"); err == nil {
+		t.Fatal("unsupported source borrowed another provider's suggestions")
 	}
 }

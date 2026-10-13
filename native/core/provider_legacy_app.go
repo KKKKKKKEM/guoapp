@@ -74,11 +74,6 @@ func (d *Downloader) fetchLegacyCatalogCategoryPage(ctx context.Context, page in
 	return items, hasMore, errors.Join(failures...)
 }
 
-func (d *Downloader) fetchLegacyChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
-	drama, chapters, err := d.fetchLegacyDetail(ctx, sourceID)
-	return drama.DisplayTitle(), chapters, err
-}
-
 func (d *Downloader) fetchLegacyDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
 	var detail detailResponse
 	if err := d.fetchAPI(ctx, "/api/app/playlet/detail/"+url.PathEscape(sourceID), nil, &detail); err != nil {

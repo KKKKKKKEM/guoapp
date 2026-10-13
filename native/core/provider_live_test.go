@@ -28,7 +28,12 @@ func TestLiveProviderCatalogRankingDetailAndPlaybackSmoke(t *testing.T) {
 		{source: sourceDSD, board: "dsd-catalog"},
 	} {
 		t.Run(scenario.source, func(t *testing.T) {
-			dramas, more, err := fetchLiveCatalogPage(ctx, engine.downloader, scenario.source)
+			provider, found := findProvider(scenario.source)
+			if !found {
+				t.Fatal("provider missing")
+			}
+			catalog, err := provider.Catalog(ctx, engine.downloader, providerCatalogRequest{Page: 1})
+			dramas, more := catalog.Items, catalog.HasMore
 			if err != nil || len(dramas) == 0 {
 				t.Fatalf("catalog failed: count=%d more=%t err=%v", len(dramas), more, err)
 			}
@@ -45,7 +50,7 @@ func TestLiveProviderCatalogRankingDetailAndPlaybackSmoke(t *testing.T) {
 				if index >= 8 {
 					break
 				}
-				raw, chapters, err := fetchLiveDetail(ctx, engine.downloader, scenario.source, drama.SourceID)
+				raw, chapters, err := provider.Detail(ctx, engine.downloader, drama)
 				if err != nil {
 					lastErr = err
 					continue
@@ -83,31 +88,5 @@ func TestLiveProviderCatalogRankingDetailAndPlaybackSmoke(t *testing.T) {
 			}
 			t.Fatalf("could not resolve a playable %s episode; last error: %v", scenario.source, lastErr)
 		})
-	}
-}
-
-func fetchLiveCatalogPage(ctx context.Context, d *Downloader, source string) ([]Drama, bool, error) {
-	switch source {
-	case sourceHuangju:
-		return d.fetchHuangjuCatalogPage(ctx, 1, "", "")
-	case sourceYeguo:
-		return d.fetchYeguoCatalogPage(ctx, 1, "", "")
-	case sourceDSD:
-		return d.fetchDSDCatalogPage(ctx, 1, "", "")
-	default:
-		return nil, false, errNativeBuildSource
-	}
-}
-
-func fetchLiveDetail(ctx context.Context, d *Downloader, source, sourceID string) (Drama, []Chapter, error) {
-	switch source {
-	case sourceHuangju:
-		return d.fetchHuangjuDetail(ctx, sourceID)
-	case sourceYeguo:
-		return d.fetchYeguoDetail(ctx, sourceID)
-	case sourceDSD:
-		return d.fetchDSDDetail(ctx, sourceID)
-	default:
-		return Drama{}, nil, errNativeBuildSource
 	}
 }

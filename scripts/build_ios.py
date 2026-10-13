@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from app_build import BuildVariant, add_variant_argument
+from generate_sources import generate_sources
 
 root = Path(__file__).resolve().parents[1]
 
@@ -29,6 +30,7 @@ def build_core(simulator=False, variant=BuildVariant()):
     environment.setdefault('GOSUMDB', 'off')
     environment['CGO_ENABLED'] = '1'
     environment['GOTOOLCHAIN'] = os.environ.get('GOTOOLCHAIN', 'auto')
+    generate_sources(root, go=go, environment=environment)
     slices = [('iphoneos', 'arm64', 'arm64-apple-ios15.1')]
     if simulator:
         slices.extend([

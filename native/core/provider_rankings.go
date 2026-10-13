@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 )
@@ -21,24 +20,7 @@ type rankingBoard struct {
 	upstreamKey string
 }
 
-var rankingBoards = []rankingBoard{
-	{ID: "hongguo-hot", Source: sourceHongguo, Name: "总热播榜", Description: "红果观看、互动等综合热度；每日更新。", path: "hot-drama", upstreamKey: "hongguo"},
-	{ID: "hongguo-real", Source: sourceHongguo, Name: "真人剧榜", Description: "红果真人剧热播榜；每日更新。", path: "hot-real-drama", upstreamKey: "real"},
-	{ID: "hongguo-comic", Source: sourceHongguo, Name: "漫剧榜", Description: "红果漫剧热播榜；每日更新。", path: "hot-comic-drama", upstreamKey: "comic"},
-	{ID: "hongguo-ai", Source: sourceHongguo, Name: "AI剧榜", Description: "红果 AI 剧热播榜；每日更新。", path: "hot-ai-drama", upstreamKey: "ai"},
-	{ID: "huangdou-all", Source: sourceHuangdou, Name: "总榜", Description: "黄豆短剧总榜，保留站点返回的顺序。", upstreamKey: "all"},
-	{ID: "huangdou-mogai", Source: sourceHuangdou, Name: "魔改榜", Description: "黄豆站点魔改榜。", upstreamKey: "mogai"},
-	{ID: "huangdou-search", Source: sourceHuangdou, Name: "搜索榜", Description: "黄豆站点搜索榜。", upstreamKey: "search"},
-	{ID: "huangdou-favorite", Source: sourceHuangdou, Name: "收藏榜", Description: "黄豆站点收藏榜。", upstreamKey: "favorite"},
-	{ID: "huangdou-finish", Source: sourceHuangdou, Name: "完结榜", Description: "黄豆站点完结榜。", upstreamKey: "finish"},
-	{ID: "huangguo-hot", Source: sourceHuangguoAI, Name: "热播榜", Description: "黄果站点热播 TOP 20；每日更新。", path: "hot"},
-	{ID: "huangguo-recommend", Source: sourceHuangguoAI, Name: "推荐榜", Description: "黄果站点推荐 TOP 20。", path: "recommend"},
-	{ID: "huangguo-potential", Source: sourceHuangguoAI, Name: "潜力榜", Description: "黄果站点潜力 TOP 20。", path: "potential"},
-	{ID: "huangju-hot", Source: sourceHuangju, Name: "热门榜", Description: "剧果目录热门顺序，按源站返回顺序展示。"},
-	{ID: "huangju-new", Source: sourceHuangju, Name: "最新榜", Description: "剧果最新目录顺序，按源站返回顺序展示。", path: huangjuNewestCategory},
-	{ID: "yeguo-recommend", Source: sourceYeguo, Name: "目录榜", Description: "野果默认目录顺序，按源站返回顺序展示。"},
-	{ID: "dsd-catalog", Source: sourceDSD, Name: "目录榜", Description: "帝果分类目录聚合顺序，按源站返回顺序展示。"},
-}
+var rankingBoards []rankingBoard
 
 type rankingItem struct {
 	Rank   int    `json:"rank"`
@@ -85,7 +67,8 @@ func cloneRankingPage(page rankingPage) rankingPage {
 }
 
 func singlePageRankingBoard(board rankingBoard) bool {
-	return board.Source == sourceHuangguoAI || board.Source == sourceDSD
+	provider, found := findProvider(board.Source)
+	return found && provider.Definition().SinglePageRankings
 }
 
 func rankingDramaWithoutImages(drama Drama) Drama {
@@ -161,65 +144,33 @@ func (d *Downloader) loadRankingPage(ctx context.Context, board rankingBoard, pa
 }
 
 func (d *Downloader) fetchRankingPage(ctx context.Context, board rankingBoard, page int) (rankingPage, error) {
-	switch board.Source {
-	case sourceHongguo:
-		return d.fetchHongguoRankingPage(ctx, board, page)
-	case sourceHuangdou:
-		var decoded any
-		err := newHuangdouAPIClient(d).call(ctx, "/drama/rank", map[string]any{"tab": board.upstreamKey, "page": strconv.Itoa(page)}, &decoded)
-		if err != nil {
-			return rankingPage{}, err
+	provider, found := findProvider(board.Source)
+	if found {
+		if rankings, supported := provider.(ProviderRankings); supported {
+			return rankings.Rankings(ctx, d, board, page)
 		}
-		return parseHuangdouRanking(decoded, page)
-	case sourceHuangguoAI:
-		if page != 1 {
-			return rankingPage{}, errors.New("该榜单只有一页")
-		}
-		pageURL := d.providerBaseURL(sourceHuangguoAI) + "/ranks/" + board.path + "/"
-		body, err := d.fetchProviderText(ctx, pageURL, d.providerBaseURL(sourceHuangguoAI)+"/")
-		if err != nil {
-			return rankingPage{}, err
-		}
-		return parseHuangguoRanking(body, board)
-	case sourceHuangju, sourceYeguo, sourceDSD:
-		return d.fetchCatalogRankingPage(ctx, board, page)
-	default:
-		return rankingPage{}, fmt.Errorf("不支持的榜单站源 %s", board.Source)
 	}
+	return rankingPage{}, fmt.Errorf("不支持的榜单站源 %s", board.Source)
 }
 
 func (d *Downloader) fetchCatalogRankingPage(ctx context.Context, board rankingBoard, page int) (rankingPage, error) {
 	if singlePageRankingBoard(board) && page != 1 {
 		return rankingPage{}, errors.New("该榜单只有一页")
 	}
+	provider, found := findProvider(board.Source)
+	if !found {
+		return rankingPage{}, fmt.Errorf("不支持的榜单站源 %s", board.Source)
+	}
 	category := board.path
-	if board.Source == sourceYeguo && category == "recommend" {
-		category = ""
-		categories, err := d.fetchYeguoCategories(ctx)
-		if err == nil {
-			for _, item := range categories {
-				if strings.HasPrefix(item.ID, "recommend:") {
-					category = item.ID
-					break
-				}
-			}
-		}
+	if resolver, supported := provider.(ProviderRankingCategory); supported {
+		category = resolver.RankingCategory(ctx, d, category)
 	}
-	var items []Drama
-	var more bool
-	var err error
-	switch board.Source {
-	case sourceHuangju:
-		items, more, err = d.fetchHuangjuCatalogPage(ctx, page, category, "")
-	case sourceYeguo:
-		items, more, err = d.fetchYeguoCatalogPage(ctx, page, category, "")
-	case sourceDSD:
-		items, more, err = d.fetchDSDCatalogPage(ctx, page, category, "")
-	}
+	upstream, err := provider.Catalog(ctx, d, providerCatalogRequest{Page: page, Category: category})
+	items, more := upstream.Items, upstream.HasMore
 	if err != nil {
 		return rankingPage{}, err
 	}
-	if board.Source == sourceDSD {
+	if provider.Definition().SinglePageRankings {
 		more = false
 	}
 	result := rankingPage{Items: make([]rankingItem, 0, len(items)), HasMore: more}

@@ -63,7 +63,7 @@ func TestHuangguoMediaUsesBrowserSessionPageRefererAndPreviewToken(t *testing.T)
 	server.StartTLS()
 	defer server.Close()
 	d := sourceFixtureDownloader(t, nil)
-	d.cfg.HuangguoVideoURL, d.cfg.InsecureTLS = server.URL, true
+	d.cfg.ProviderURLs[sourceHuangguoVideo], d.cfg.InsecureTLS = server.URL, true
 	d.proxyRouter = &proxyRouter{}
 	d.client.Transport = newHuangguoBrowserTransport(http.DefaultTransport, d)
 	t.Cleanup(d.client.CloseIdleConnections)

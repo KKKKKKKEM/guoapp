@@ -143,7 +143,7 @@ func (c *huangdouAPIClient) call(ctx context.Context, path string, data map[stri
 		if errors.As(lastErr, &apiErr) {
 			return lastErr
 		}
-		if c.host == huangdouBaseURL && c.d.cfg.HuangdouURL == "" {
+		if c.host == huangdouBaseURL && c.d.cfg.ProviderURLs[sourceHuangdou] == "" {
 			c.host = "https://xqjurgek.top"
 		}
 	}

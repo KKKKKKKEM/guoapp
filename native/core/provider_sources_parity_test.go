@@ -32,10 +32,10 @@ func providerParityDownloader(t *testing.T, transport func(*http.Request, url.Va
 		}
 		return transport(request, form)
 	})
-	d.cfg.HuangjuAPIURL = "https://api.huangju.test"
-	d.cfg.HuangjuURL = "https://huangju.test"
-	d.cfg.YeguoURL = "https://yeguo.test"
-	d.cfg.DSDURL = "https://dsd.test"
+	d.cfg.ProviderURLs[sourceHuangju+":api"] = "https://api.huangju.test"
+	d.cfg.ProviderURLs[sourceHuangju] = "https://huangju.test"
+	d.cfg.ProviderURLs[sourceYeguo] = "https://yeguo.test"
+	d.cfg.ProviderURLs[sourceDSD] = "https://dsd.test"
 	return d
 }
 
@@ -160,8 +160,8 @@ func TestProviderCatalogUpdateKeepsSinglePageContinuation(t *testing.T) {
 		pages = append(pages, page)
 		return sourceFixtureResponse(request, http.StatusOK, fmt.Sprintf(`{"items":[{"id":%q,"slug":"page-%s","title":"剧果分页%s","description":"完整资料","totalEpisodes":6}],"page":%s,"pageSize":1,"total":60}`, page, page, page, page)), nil
 	})
-	engine.downloader.cfg.HuangjuAPIURL = "https://api.huangju.test"
-	engine.downloader.cfg.HuangjuURL = "https://huangju.test"
+	engine.downloader.cfg.ProviderURLs[sourceHuangju+":api"] = "https://api.huangju.test"
+	engine.downloader.cfg.ProviderURLs[sourceHuangju] = "https://huangju.test"
 	engine.catalogs[sourceHuangju] = []nativeDrama{{ID: "huangju:existing-100", Source: sourceHuangju, Title: "已有剧果缓存"}}
 	engine.catalogStates[sourceHuangju] = nativeCatalogState{Page: 7, HasMore: true}
 
@@ -276,7 +276,7 @@ func TestHuangjuPlaybackUsesSignedCookiesForPlaylist(t *testing.T) {
 	}))
 	defer server.Close()
 	mediaURL = server.URL + "/media.m3u8"
-	d := &Downloader{cfg: Config{HuangjuAPIURL: server.URL, HuangjuURL: "https://huangju.test"}, client: server.Client(), limiter: newRequestLimiter(3, 0), providerHosts: map[string]string{}}
+	d := &Downloader{cfg: Config{ProviderURLs: map[string]string{sourceHuangju + ":api": server.URL, sourceHuangju: "https://huangju.test"}}, client: server.Client(), limiter: newRequestLimiter(3, 0), providerHosts: map[string]string{}}
 	media, err := d.resolveHuangjuMedia(context.Background(), Task{DramaID: providerDramaID(sourceHuangju, "sample-77"), Chapter: Chapter{ID: providerChapterID(sourceHuangju, "sample-77", "episode-1")}})
 	if err != nil || !sawCookie || media.Playlist == "" || !strings.HasPrefix(media.Playlist, "#EXTM3U") {
 		t.Fatalf("huangju playback was not resolved through signed playlist: %+v %v", media, err)

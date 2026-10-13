@@ -2,72 +2,124 @@ import 'dart:convert';
 
 import 'app_build.dart';
 
+part 'source_registry.g.dart';
+
 class SourceSite {
-  const SourceSite(this.id, this.name, this.description);
+  const SourceSite(
+    this.id,
+    this.name,
+    this.description, {
+    required this.groupId,
+    required this.groupName,
+    required this.entryName,
+    required this.restricted,
+    required this.defaultEnabled,
+    required this.searchMode,
+    required this.searchSuggestions,
+    required this.metadataFields,
+  });
   final String id;
   final String name;
   final String description;
-  bool get onlineSearch => id == 'hongguo' || pagedSearch;
-  bool get pagedSearch =>
-      id == 'huangju' ||
-      id == 'yeguo' ||
-      id == 'dsd' ||
-      id == 'sorani' ||
-      id == 'guipian' ||
-      id == 'hanxiaoquan';
-  bool get searchSuggestions => id == 'hongguo';
-  String get groupId => switch (id) {
-    'huangguo-video' || 'huangguoai' || 'cloudfront' => 'huangguo',
-    _ => id,
-  };
-  String get groupName => groupId == 'huangguo' ? '黄果' : name;
-  String get entryName => switch (id) {
-    'huangguo-video' => '视频',
-    'huangguoai' => 'AI',
-    'cloudfront' => '旧版',
-    _ => name,
-  };
+  final String groupId;
+  final String groupName;
+  final String entryName;
+  final bool restricted;
+  final bool defaultEnabled;
+  final String searchMode;
+  final bool searchSuggestions;
+  final List<String> metadataFields;
+  bool get onlineSearch => searchMode != 'local';
+  bool get pagedSearch => searchMode == 'paged';
 
-  static const hongguo = SourceSite('hongguo', '红果', '短剧 · 漫剧 · AI 剧');
-  static const dsd = SourceSite('dsd', '帝果', '分类视频 · 在线搜索');
-  static const sorani = SourceSite('sorani', '青空', '番剧 · 剧场动画 · 特摄');
-  static const guipian = SourceSite('guipian', '鬼片', '鬼片 · 电视剧 · 动漫');
-  static const hanxiaoquan = SourceSite(
-    'hanxiaoquan',
-    '韩小圈',
-    '韩剧 · 韩国电影 · 综艺动漫',
-  );
+  bool needsExtraMetadata(Drama drama) {
+    if (drama.source != id) return false;
+    for (final field in metadataFields) {
+      final missing = switch (field) {
+        'title' => drama.title.isEmpty,
+        'description' => drama.description.isEmpty,
+        'cover' => drama.cover.isEmpty,
+        'episodes' => drama.episodes <= 0,
+        'category' => drama.category.isEmpty,
+        'vip' => drama.vipStatus == null,
+        'heat' => drama.heat.isEmpty,
+        'views' => drama.views.isEmpty,
+        'onlineDate' => drama.onlineDate.isEmpty,
+        'tags' => drama.tags.isEmpty,
+        'releaseStatus' => drama.releaseStatus.isEmpty,
+        _ => false,
+      };
+      if (missing) return true;
+    }
+    return false;
+  }
 
-  /// 默认可见的站源：红果、韩小圈、鬼片网、青空次元。
-  static const primaryValues = [hongguo, hanxiaoquan, guipian, sorani];
-
-  /// 敏感站源：默认隐藏，输入解锁密码后才显示。
-  static const restrictedValues = [
-    SourceSite('huangdou', '黄豆', '精选短剧'),
-    SourceSite('huangju', '剧果', '热门 · 最新 · 分类短剧'),
-    SourceSite('yeguo', '野果', '分类短剧 · 在线搜索'),
-    dsd,
-    SourceSite('huangguo-video', '黄果视频', '视频剧集'),
-    SourceSite('huangguoai', '黄果 AI', 'AI 短剧'),
-    SourceSite('cloudfront', '黄果旧版', '旧 API 剧库'),
-  ];
+  static const hongguo = _sourceHongguo;
+  static const dsd = _sourceDsd;
+  static const sorani = _sourceSorani;
+  static const guipian = _sourceGuipian;
+  static const hanxiaoquan = _sourceHanxiaoquan;
+  static const primaryValues = _primarySourceSites;
+  static const restrictedValues = _restrictedSourceSites;
   static const knownValues = [...primaryValues, ...restrictedValues];
-  static const allValues = [...primaryValues, ...restrictedValues];
-  static const values = allSourcesEnabled ? knownValues : [hongguo];
+  static const allValues = knownValues;
+  static const values = allSourcesEnabled ? knownValues : _defaultSourceSites;
   static bool isAvailable(String id) => values.any((site) => site.id == id);
   static bool isKnown(String id) => allValues.any((site) => site.id == id);
   static bool isPrimary(String id) =>
       primaryValues.any((site) => site.id == id);
   static bool isRestricted(String id) =>
       restrictedValues.any((site) => site.id == id);
-
-  /// 运行时可见站源：未解锁时只保留 [primaryValues]。
   static List<SourceSite> visibleValues({required bool unlocked}) => [
     for (final site in values)
-      if (unlocked || isPrimary(site.id)) site,
+      if (unlocked || !site.restricted) site,
   ];
   static SourceSite byId(String id) =>
       allValues.firstWhere((site) => site.id == id, orElse: () => hongguo);
+
+  static String rankingSourceForID(String id) => _rankingSourceIDs[id] ?? '';
+
+  static bool matchesManifest(Object? manifest) {
+    if (manifest is! Map) return false;
+    final sources = manifest['sources'];
+    final rankings = manifest['rankingSources'];
+    if (sources is! List ||
+        sources.length != knownValues.length ||
+        rankings is! Map ||
+        rankings.length != _rankingSourceIDs.length) {
+      return false;
+    }
+    for (final entry in _rankingSourceIDs.entries) {
+      if (rankings[entry.key] != entry.value) return false;
+    }
+    final byId = <String, SourceSite>{
+      for (final site in knownValues) site.id: site,
+    };
+    for (final row in sources) {
+      if (row is! Map) return false;
+      final site = byId.remove(row['id']);
+      if (site == null ||
+          row['name'] != site.name ||
+          row['description'] != site.description ||
+          row['groupId'] != site.groupId ||
+          row['groupName'] != site.groupName ||
+          row['entryName'] != site.entryName ||
+          row['restricted'] != site.restricted ||
+          row['default'] != site.defaultEnabled ||
+          row['searchMode'] != site.searchMode ||
+          row['searchSuggestions'] != site.searchSuggestions) {
+        return false;
+      }
+      final fields = row['metadataFields'];
+      if (fields is! List || fields.length != site.metadataFields.length) {
+        return false;
+      }
+      for (var index = 0; index < fields.length; index++) {
+        if (fields[index] != site.metadataFields[index]) return false;
+      }
+    }
+    return byId.isEmpty;
+  }
 }
 
 class SourceGroup {

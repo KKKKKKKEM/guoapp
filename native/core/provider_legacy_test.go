@@ -92,7 +92,7 @@ func TestLegacyAnonymousCatalogAndSessionReuse(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Source != "cloudfront" || items[0].ChannelName != "当前分类" {
 		t.Fatalf("catalog: count=%d error=%v", len(items), err)
 	}
-	_, chapters, err := d.fetchLegacyChapters(context.Background(), "current-drama")
+	_, chapters, err := d.providerChapters(context.Background(), sourceCloudFront, "current-drama")
 	if err != nil || len(chapters) != 1 {
 		t.Fatalf("chapters: count=%d error=%v", len(chapters), err)
 	}

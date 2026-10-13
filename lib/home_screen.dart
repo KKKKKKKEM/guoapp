@@ -176,6 +176,15 @@ class _HomeScreenState extends State<HomeScreen> {
   bool get _onlineSearch => _group.sources.any((source) => source.onlineSearch);
   bool get _searchSuggestions =>
       _group.sources.any((source) => source.searchSuggestions);
+
+  Future<List<String>> _loadSearchSuggestions(String query) async {
+    final source = _group.sources
+        .where((source) => source.searchSuggestions)
+        .firstOrNull;
+    if (source == null) return const [];
+    return widget.repository.suggestions(source.id, query);
+  }
+
   String get _searchHint {
     final online = _group.sources
         .where((source) => source.onlineSearch)
@@ -487,7 +496,7 @@ class _HomeScreenState extends State<HomeScreen> {
             : '筛选当前已加载短剧',
         recentSearches: widget.store.recentSearches,
         onCancel: () => unawaited(widget.repository.cancelSuggestions()),
-        suggestions: _searchSuggestions ? widget.repository.suggestions : null,
+        suggestions: _searchSuggestions ? _loadSearchSuggestions : null,
       ),
     );
     if (query != null && mounted) {
@@ -1474,9 +1483,7 @@ class _HomeScreenState extends State<HomeScreen> {
               controller: _search,
               autofocus: true,
               hint: _searchHint,
-              suggestions: _searchSuggestions
-                  ? widget.repository.suggestions
-                  : null,
+              suggestions: _searchSuggestions ? _loadSearchSuggestions : null,
               onChanged: _searchChanged,
               onCancel: () => unawaited(widget.repository.cancelSuggestions()),
               onSearch: _submitSearch,

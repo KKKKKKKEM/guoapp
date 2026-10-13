@@ -129,7 +129,7 @@ func (engine *nativeEngine) checkSource(ctx context.Context, source string, sele
 	var chapter Chapter
 	if !run("分集目录", func() (string, error) {
 		_, id, _ := splitProviderDramaID(drama.ID)
-		_, chapters, err := engine.downloader.GetHuangguoChapters(ctx, source, id)
+		_, chapters, err := engine.downloader.providerChapters(ctx, source, id)
 		if err != nil {
 			return "", err
 		}

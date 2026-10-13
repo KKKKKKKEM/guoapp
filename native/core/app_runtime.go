@@ -5,9 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,31 +15,19 @@ import (
 )
 
 type Config struct {
-	dataDir          string
-	MaxPagesPerSort  int
-	PageSize         int
-	Retries          int
-	InsecureTLS      bool
-	HuangguoAIURL    string
-	HuangguoVideoURL string
-	HuangdouURL      string
-	HongguoURL       string
-	HuangjuURL       string
-	HuangjuAPIURL    string
-	YeguoURL         string
-	YeguoAPIURL      string
-	DSDURL           string
-	SoraniURL        string
-	SoraniAPIURL     string
-	GuipianURL       string
-	HanxiaoquanURL   string
-	Token            string
-	AESKeyHex        string
-	InterfaceKey     string
-	ParamKey         string
-	ParamIV          string
-	APIBase          string
-	CDNURL           string
+	dataDir         string
+	MaxPagesPerSort int
+	PageSize        int
+	Retries         int
+	InsecureTLS     bool
+	ProviderURLs    map[string]string
+	Token           string
+	AESKeyHex       string
+	InterfaceKey    string
+	ParamKey        string
+	ParamIV         string
+	APIBase         string
+	CDNURL          string
 }
 
 type Downloader struct {
@@ -73,7 +59,9 @@ type Downloader struct {
 	previewSessions       map[string]*huangguoPreviewSession
 }
 
-func defaultConfig() Config { return Config{MaxPagesPerSort: 50, PageSize: 30, Retries: 2} }
+func defaultConfig() Config {
+	return Config{MaxPagesPerSort: 50, PageSize: 30, Retries: 2, ProviderURLs: map[string]string{}}
+}
 
 type nativeDrama struct {
 	MetadataSchema int      `json:"metadataSchema"`
@@ -353,7 +341,9 @@ func nativeDispatch(input nativeInput) (any, error) {
 			nativeState.engine = engine
 		}
 		nativeState.Unlock()
-		return map[string]any{"version": "0.2.17", "standalone": true, "allSources": buildAllSources == "true"}, nil
+		manifest := ProviderManifest()
+		manifest["version"], manifest["standalone"], manifest["allSources"] = "0.2.17", true, buildAllSources == "true"
+		return manifest, nil
 	}
 	engine := nativeState.engine
 	nativeState.Unlock()
@@ -413,7 +403,7 @@ func nativeDispatch(input nativeInput) (any, error) {
 	case "rankings":
 		return engine.nativeRanking(ctx, input)
 	case "suggestions":
-		items, err := engine.suggestions(ctx, input.Query)
+		items, err := engine.suggestions(ctx, input.Source, input.Query)
 		return map[string]any{"items": items}, err
 	case "downloadDirectory":
 		engine.downloads.mu.Lock()
@@ -490,7 +480,8 @@ func nativeDispatch(input nativeInput) (any, error) {
 
 func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput) (nativeCatalogResult, error) {
 	source := canonicalProviderSource(input.Source)
-	if !isHuangguoProviderSource(source) {
+	provider, found := findProvider(source)
+	if !found {
 		return nativeCatalogResult{}, errors.New("请选择有效站源")
 	}
 	category := strings.TrimSpace(input.Category)
@@ -518,83 +509,8 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 	}
 	d := engine.downloader
 	result := nativeCatalogResult{Items: []nativeDrama{}, Page: page}
-	if query != "" && source == sourceHongguo {
-		entry, err := d.searchHongguoDramas(ctx, query)
-		if err != nil {
-			return result, err
-		}
-		for _, drama := range entry.Dramas {
-			result.Items = append(result.Items, nativeNormalize(drama))
-		}
-		result.Warning, result.Page = entry.Warning, 1
-		if entry.Limited && result.Warning == "" {
-			result.Warning = "已显示当前可获取的匹配结果，使用更完整的剧名可继续查找"
-		}
-		return result, nil
-	}
-	if query != "" && source == sourceHuangju {
-		items, more, err := d.fetchHuangjuCatalogPage(ctx, page, "", query)
-		if err != nil {
-			return result, err
-		}
-		for _, drama := range items {
-			result.Items = append(result.Items, nativeNormalize(drama))
-		}
-		result.HasMore = more
-		return result, nil
-	}
-	if query != "" && source == sourceSorani {
-		items, more, err := d.fetchSoraniCatalogPage(ctx, page, "", query)
-		if err != nil {
-			return result, err
-		}
-		for _, drama := range items {
-			result.Items = append(result.Items, nativeNormalize(drama))
-		}
-		result.HasMore = more
-		return result, nil
-	}
-	if query != "" && source == sourceGuipian {
-		items, more, err := d.fetchGuipianCatalogPage(ctx, page, "", query)
-		if err != nil {
-			return result, err
-		}
-		for _, drama := range items {
-			result.Items = append(result.Items, nativeNormalize(drama))
-		}
-		result.HasMore = more
-		return result, nil
-	}
-	if query != "" && source == sourceHanxiaoquan {
-		items, more, err := d.fetchHanxiaoquanCatalogPage(ctx, page, "", query)
-		if err != nil {
-			return result, err
-		}
-		for _, drama := range items {
-			result.Items = append(result.Items, nativeNormalize(drama))
-		}
-		result.HasMore = more
-		return result, nil
-	}
-	if query != "" && (source == sourceYeguo || source == sourceDSD) {
-		var items []Drama
-		var more bool
-		var err error
-		if source == sourceYeguo {
-			items, more, err = d.fetchYeguoCatalogPage(ctx, page, "", query)
-		} else {
-			items, more, err = d.fetchDSDCatalogPage(ctx, page, "", query)
-		}
-		if err != nil {
-			return result, err
-		}
-		for _, drama := range items {
-			result.Items = append(result.Items, nativeNormalize(drama))
-		}
-		result.HasMore = more
-		return result, nil
-	}
-	if query != "" {
+	definition := provider.Definition()
+	if query != "" && definition.SearchMode == "local" {
 		engine.mu.Lock()
 		items := append([]nativeDrama{}, engine.catalogs[source]...)
 		engine.mu.Unlock()
@@ -611,6 +527,18 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		result.LocalSearch = true
 		return result, nil
 	}
+	request := providerCatalogRequest{Page: page, Category: category, Query: query}
+	if query != "" {
+		upstream, err := provider.Catalog(ctx, d, request)
+		if err != nil {
+			return result, err
+		}
+		for _, drama := range upstream.Items {
+			result.Items = append(result.Items, nativeNormalize(drama))
+		}
+		result.HasMore, result.Warning, result.Page = upstream.HasMore, upstream.Warning, upstream.Page
+		return result, nil
+	}
 	unlock, lockErr := engine.lockSourceCatalog(ctx, source)
 	if lockErr != nil {
 		return nativeCatalogResult{}, lockErr
@@ -619,10 +547,7 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	var items []Drama
-	var err error
-	switch source {
-	case sourceHongguo:
+	if definition.IncrementalCatalog {
 		engine.mu.Lock()
 		known := make(map[string]bool, len(engine.catalogs[cacheKey]))
 		for _, drama := range engine.catalogs[cacheKey] {
@@ -630,73 +555,20 @@ func (engine *nativeEngine) nativeCatalog(ctx context.Context, input nativeInput
 		}
 		engine.mu.Unlock()
 		ctx = context.WithValue(ctx, libraryKnownKey{}, known)
-		if page > 1 {
-			ctx = context.WithValue(ctx, libraryMoreKey{}, true)
-		}
-		items, err = d.fetchHongguoAppCatalogCategory(ctx, category)
-		state := d.hongguoCatalogSnapshot()
-		result.hongguo = state
-		result.HasMore = hongguoCatalogHasMore(state)
-		if category != "" && state != nil {
-			result.HasMore = !state.Feeds["category:"+category].Exhausted
-		}
-		if len(items) == 0 && err != nil && ctx.Err() == nil && (category == "" || category == "short_play") {
-			var totalPages int
-			items, totalPages, err = d.fetchHongguoCategoryPage(ctx, "real-drama?page="+strconv.Itoa(page), "真人剧")
-			result.HasMore = page < totalPages
-		}
-	case sourceHuangdou:
-		client := newHuangdouAPIClient(d)
-		var decoded any
-		err = client.call(ctx, "/drama/list", map[string]any{"page": strconv.Itoa(page), "page_size": "30"}, &decoded)
-		if err == nil {
-			rows := huangdouList(decoded)
-			for _, row := range rows {
-				if drama := huangdouDramaFromMap(row); drama.ID != "" {
-					items = append(items, drama)
-				}
-			}
-			result.HasMore = len(rows) >= 30
-		}
-	case sourceHuangguoAI:
-		items, result.HasMore, err = d.fetchHuangguoAICatalogPage(ctx, page, category)
-	case sourceHuangju:
-		items, result.HasMore, err = d.fetchHuangjuCatalogPage(ctx, page, category, "")
-	case sourceYeguo:
-		items, result.HasMore, err = d.fetchYeguoCatalogPage(ctx, page, category, "")
-	case sourceDSD:
-		items, result.HasMore, err = d.fetchDSDCatalogPage(ctx, page, category, "")
-	case sourceSorani:
-		items, result.HasMore, err = d.fetchSoraniCatalogPage(ctx, page, category, "")
-	case sourceGuipian:
-		items, result.HasMore, err = d.fetchGuipianCatalogPage(ctx, page, category, "")
-	case sourceHanxiaoquan:
-		items, result.HasMore, err = d.fetchHanxiaoquanCatalogPage(ctx, page, category, "")
-	case sourceHuangguoVideo:
-		address := fmt.Sprintf("%s/videos?page=%d", d.providerBaseURL(source), page)
-		if category != "" {
-			address += "&category=" + url.QueryEscape(category)
-		}
-		var body string
-		body, err = d.fetchProviderText(ctx, address, d.providerBaseURL(source)+"/")
-		if err == nil {
-			items = parseHuangguoVideoCards(body, address)
-		}
-		result.HasMore = len(items) >= 20
-	case sourceCloudFront:
-		items, result.HasMore, err = d.fetchLegacyCatalogCategoryPage(ctx, page, category)
 	}
-	if err != nil && len(items) == 0 {
+	upstream, err := provider.Catalog(ctx, d, request)
+	result.HasMore, result.Warning, result.hongguo = upstream.HasMore, upstream.Warning, upstream.hongguo
+	if err != nil && len(upstream.Items) == 0 {
 		return result, err
 	}
-	if len(items) == 0 && page == 1 && source != sourceHuangju && source != sourceYeguo && source != sourceDSD && source != sourceSorani && source != sourceGuipian && source != sourceHanxiaoquan {
+	if len(upstream.Items) == 0 && page == 1 && !definition.AllowEmptyCatalog {
 		return result, errors.New("站源暂未返回剧集，请稍后刷新")
 	}
 	if err != nil {
 		result.Warning = publicError(err).Error()
 	}
 	seen := map[string]bool{}
-	for _, drama := range items {
+	for _, drama := range upstream.Items {
 		if drama.ID == "" || seen[drama.ID] {
 			continue
 		}
@@ -712,58 +584,19 @@ func (engine *nativeEngine) nativeDetail(ctx context.Context, drama nativeDrama)
 	if !valid {
 		return nil, errors.New("剧集信息无效，请刷新剧库")
 	}
-	var title string
-	var raw Drama
-	var chapters []Chapter
-	var err error
-	switch source {
-	case sourceHuangguoAI:
-		raw, chapters, err = engine.downloader.fetchHuangguoAIDetail(ctx, sourceID)
-	case sourceHuangguoVideo:
-		raw, chapters, err = engine.downloader.fetchHuangguoVideoDetail(ctx, sourceID)
-	case sourceCloudFront:
-		raw, chapters, err = engine.downloader.fetchLegacyDetail(ctx, sourceID)
-	case sourceHuangju:
-		raw, chapters, err = engine.downloader.fetchHuangjuDetail(ctx, sourceID)
-	case sourceYeguo:
-		raw, chapters, err = engine.downloader.fetchYeguoDetail(ctx, sourceID)
-	case sourceDSD:
-		raw, chapters, err = engine.downloader.fetchDSDDetail(ctx, sourceID)
-	case sourceSorani:
-		raw, chapters, err = engine.downloader.fetchSoraniDetail(ctx, sourceID)
-	case sourceGuipian:
-		raw, chapters, err = engine.downloader.fetchGuipianDetail(ctx, sourceID)
-	case sourceHanxiaoquan:
-		raw, chapters, err = engine.downloader.fetchHanxiaoquanDetail(ctx, sourceID)
-	default:
-		title, chapters, err = engine.downloader.GetHuangguoChapters(ctx, source, sourceID)
-	}
+	provider, _ := findProvider(source)
+	raw, chapters, err := provider.Detail(ctx, engine.downloader, Drama{ID: drama.ID, Source: source, SourceID: sourceID, Title: drama.Title})
 	if err != nil {
 		return nil, err
 	}
 	if len(chapters) == 0 {
 		return nil, errors.New("该剧暂时没有可播放的分集")
 	}
-	if title != "" && title != "短剧" {
-		drama.Title = title
-	}
 	if raw.ID == drama.ID {
 		drama = mergeNativeDrama(drama, nativeNormalize(raw))
 	}
-	if source == sourceHongguo {
-		raw := engine.downloader.hongguoCachedDrama(Drama{ID: drama.ID, Title: drama.Title, Source: source})
-		drama = mergeNativeDrama(drama, nativeNormalize(raw))
-	}
-	if source == sourceHuangdou {
-		if row, err := engine.downloader.huangdouDetail(ctx, sourceID); err == nil {
-			fresh := nativeNormalize(huangdouDramaFromMap(row))
-			if fresh.ID == drama.ID {
-				drama = mergeNativeDrama(drama, fresh)
-			}
-		}
-	}
 	drama.Source, drama.SourceID, drama.Episodes = source, sourceID, len(chapters)
-	if source == sourceHuangju || source == sourceYeguo {
+	if provider.Definition().PreserveEpisodeCount {
 		drama.Episodes = max(drama.Episodes, nativeNormalize(raw).Episodes)
 	}
 	warning := ""

@@ -2,11 +2,15 @@
 
 > ⚠️ **免责声明**：本项目源码来自网上大名鼎鼎的**鱼佬**（原作者）。我只是把它拿来打包、测试着玩，方便自己用，**不保证任何可用性，随时可能删库**。
 
-Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.87+94（Android 编译交付版，手机 / 电视 / 盒子真机验收仍未完成）**。
+Flutter 多端独立短剧 / 影视应用，原名「短剧库 APP」。站源请求、解析、下载和播放均在设备上完成，不依赖自建服务。当前源码版本：**0.2.88+95（站源架构重构开发快照；本版本未生成安装包，未完成集中验证与真机验收）**。上一个 Android 编译交付版本为 0.2.87+94。
 
 本轮在 0.2.50 基线上新增两个原生站源：**韩小圈**（`hanxiaoquan`，韩剧 / 韩国电影 / 韩国综艺 / 韩国动漫）与**鬼片网**（`guipian`，鬼片 / 电视剧 / 动漫）。默认可见站源顺序为：**红果 → 韩小圈 → 鬼片 → 青空**。
 
 > 说明：应用长期按「只维护源码与定向测试，集中验证另行安排」的方式推进。未完成集中验证与真机验收的项目保持未验收状态；历史版本的检查记录不能作为后续新增功能的验收结论。
+
+0.2.88+95：全部 11 个现有站源迁移到统一 Go `Provider` 接口与注册表，目录、搜索、详情、分类、章节获取、媒体解析、资料补齐和榜单不再各自维护站源分派。榜单定义归属各站源，搜索联想通过可选接口声明并按站源授权。Flutter 的名称、分组、可见性、搜索能力、资料补齐条件和榜单归属从 Go 清单生成；启动时核对原生清单与界面清单。保留现有站源 / 剧目 / 分集 ID、站点协议、编译版限制、权限与本地记录格式。移除旧章节分派和独立站源 URL 字段，端点配置统一按站源 ID 索引。
+
+本轮 Go 站源定向回归通过（race；全站源版及默认版授权 / 搜索 / 详情场景），Flutter 站源权限与解锁 9 项回归通过，清单生成校验和源码同步 / 归档 8 项回归通过。修改的 Dart 文件静态分析无 error / warning，保留未修改的 `playbackProbe` 方法缺少 `@override` 的 1 条 info。构建并实际调用两版 Linux Go C ABI，使用合成本地目录验证全站源版 11 源缓存 / 16 榜单、默认版 1 源缓存 / 4 榜单、未知源拒绝、本地搜索、联想能力限制，以及 Dart 清单匹配 / 权限和身份不一致拒绝。目录缓存回归覆盖全部四个 AI 分类；游标与保存回归显式设置单页请求策略，移除固定请求次数和调用序列断言，保留重启续页、失效会话恢复、部分数据、保存失败及并发提交边界。未访问真实站点或请求站源图片，未执行全套应用回归、Android / Windows / iOS 出包或真机验收，不将本轮离线结果视为平台验收。
 
 0.2.87+94：按用户要求恢复原有 Android 权限与下载插件开机接收器，撤回 0.2.86 的权限收紧；不通过删权限处理安装风险提示。底部系统手势保护、短剧 / 普通模式、强制横屏、前台下载服务及原应用标识 / 发布签名保持不变。恢复开机声明不改变原有设置，`autoRunOnBoot` 与 `autoRunOnMyPackageReplaced` 仍为关闭。
 
@@ -292,6 +296,31 @@ python3 scripts/sync_source.py --check
 
 ## 站源开发约定
 
-站源是 Go 原生 provider（`native/core/provider_*.go`），不是运行期加载的 Python 源。新增站源需接入：`provider_huangguo.go`（常量 / 白名单 / `canonicalProviderSource` / `GetHuangguoChapters`）、`provider_media.go`（baseURL / host 反查 / 播放分派）、`app_categories.go`、`app_cover_metadata.go`、`app_runtime.go`（Config 字段 + 目录 / 搜索 / 详情分派 + 空页放行），并在 `lib/models.dart` 登记 `SourceSite`。
+站源是编译内置、设备端执行的 Go 原生 provider（`native/core/provider_*.go`），不是运行期加载的 Python / JS 源。所有现有站源使用 `native/core/provider_registry.go` 中的统一接口；`provider_<站源>_adapter.go` 负责站源定义和接口适配，站点请求、认证、签名、解析及游标逻辑可复用同站源的现有实现，不在本轮重写协议。
+
+~~~go
+type Provider interface {
+    Definition() *ProviderDefinition
+    ValidCategory(string) bool
+    Categories(context.Context, *Downloader, bool) ([]nativeCategory, error)
+    Catalog(context.Context, *Downloader, providerCatalogRequest) (providerCatalogPage, error)
+    Detail(context.Context, *Downloader, Drama) (Drama, []Chapter, error)
+    Resolve(context.Context, *Downloader, Task) (providerMedia, error)
+}
+~~~
+
+新增站源流程：
+
+1. 在 `native/core` 的 `core` 包内实现一个 `Provider`。定义稳定且唯一的 ID、名称、分组、受限可见性和 `SearchMode`（`local` / `online` / `paged`）；新源通常保持 `Default: false`，不改变默认红果版。`BaseURL`、`Aliases`、`Hosts`、`HostSuffixes` 统一登记在该站源的 `ProviderDefinition`，不另加白名单和域名分派。
+2. 实现分类校验 / 获取、目录 / 搜索、详情 / 分集和媒体解析。`Catalog` 接收页码、分类和查询词，返回正确页码、续页状态及警告；`local` 搜索由公共引擎筛选本地缓存。详情和分集使用 `站源ID:站内ID` / `站源ID:站内ID:分集ID`，不得改变现有记录的身份。根据源站语义声明空目录许可、详情总集数保留、静态分类、增量目录和媒体域名保留策略。
+3. 按实际能力实现可选接口：`ProviderMetadata`（额外资料及补齐条件）、`ProviderSuggestions`（搜索联想，能力自动进入界面清单）、`ProviderRankings`（`Boards` 和 `Rankings`，榜单定义留在该源；`RankingOrder` 控制站源榜单展示顺序）、`ProviderRankingCategory`（站点特有榜单分类映射）、`ProviderCoverAddress` / `ProviderCoverReferer`（地址补齐 / 特殊请求头）。未实现的可选能力不得提供空壳方法；普通地址补齐默认复用 `Detail` 的资料。开发验证不查看、下载或处理站源图片。
+
+   `ProviderMetadata.MetadataFields()` 返回该源需要补齐的统一 `Drama` 字段名，缺任意一项时才补齐；`Metadata(...)` 执行实际获取。字段可使用 `title`、`description`、`cover`、`episodes`、`category`、`vip`、`heat`、`views`、`onlineDate`、`tags`、`releaseStatus`。条件一并生成到 Flutter，两端不再按站源 ID 各自判断；`vip` 的未知（null）与已知免费（false）必须区分，不用新增字段名代替已有模型字段。
+
+4. 在 `provider_registry.go` 的 `newProviderRegistry(...)` 参数中注册一次。目录、搜索、详情、分类、章节、媒体、资料和榜单公共入口从注册表调用，不再为新源增加 ID 分支。继续使用现有请求客户端、限流、代理、凭据和公共缓存 / 播放 / 下载流程。
+5. 执行 `python3 scripts/generate_sources.py`，提交生成的 `lib/source_registry.g.dart`，不手改生成文件，也不在 `lib/models.dart` / `lib/ranking_models.dart` 再维护一份源名单或能力判断。用 `python3 scripts/generate_sources.py --check` 检查一致性。Android / Windows 原生构建脚本及 iOS 核心构建会自动生成清单，Actions 的检查任务会拒绝未同步的清单；启动时还会检查 Dart / Go 构建版本和清单一致性。
+6. 按当前开发与验证节奏检查消费者行为：目录 / 搜索分页、ID 与资料保留、分集与播放地址、权限、取消、缓存重启及错误恢复。不得将生成清单、通过编译或离线样本等同于源站和设备可用性验收。
+
+端点覆盖统一使用 `Config.ProviderURLs[站源ID]`；独立 API 覆盖使用 `Config.ProviderURLs[站源ID + ":api"]`，没有覆盖时沿用该源的默认端点或既有发现逻辑。新增普通站源不需要给 `Config` 增加专用 URL 字段。该配置用于核心实现与合成验证，不是用户导入任意网址的插件功能。
 
 注意：Go RE2 正则**不支持 lookahead**。解析多线路播放列表时不能用 `(?=...)` 做分段，否则非捕获组会消耗下一段开头；应改用显式字符串截断（从容器标记之后查找下一段标记）。

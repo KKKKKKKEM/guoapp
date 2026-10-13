@@ -31,7 +31,7 @@ func (d *Downloader) soraniClient() *soraniAPIClient {
 	d.soraniOnce.Do(func() {
 		d.sorani = &soraniAPIClient{
 			downloader: d,
-			base:       strings.TrimRight(firstNonEmpty(d.cfg.SoraniAPIURL, soraniAPIBaseURL), "/"),
+			base:       strings.TrimRight(firstNonEmpty(d.cfg.ProviderURLs[sourceSorani+":api"], soraniAPIBaseURL), "/"),
 			site:       d.providerBaseURL(sourceSorani),
 		}
 	})

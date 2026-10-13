@@ -12,24 +12,7 @@ class RankingBoard {
   final String name;
   final String description;
   String get groupId => SourceSite.byId(source).groupId;
-  static String sourceForID(String id) => switch (id) {
-    'hongguo-hot' ||
-    'hongguo-real' ||
-    'hongguo-comic' ||
-    'hongguo-ai' => 'hongguo',
-    'huangdou-all' ||
-    'huangdou-mogai' ||
-    'huangdou-search' ||
-    'huangdou-favorite' ||
-    'huangdou-finish' => 'huangdou',
-    'huangguo-hot' ||
-    'huangguo-recommend' ||
-    'huangguo-potential' => 'huangguoai',
-    'huangju-hot' || 'huangju-new' => 'huangju',
-    'yeguo-recommend' => 'yeguo',
-    'dsd-catalog' => 'dsd',
-    _ => '',
-  };
+  static String sourceForID(String id) => SourceSite.rankingSourceForID(id);
   factory RankingBoard.fromJson(Map<String, dynamic> json) => RankingBoard(
     id: json['id'] as String? ?? '',
     source:

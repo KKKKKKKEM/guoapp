@@ -78,7 +78,7 @@ func (engine *nativeEngine) markCatalogSavePendingLocked() {
 	for key := range engine.catalogs {
 		source, _, _ := strings.Cut(key, "|")
 		record := engine.sourceRecords[source]
-		if !isHuangguoProviderSource(source) || record.NeedsSave {
+		if !isProviderSource(source) || record.NeedsSave {
 			continue
 		}
 		record.NeedsSave = true

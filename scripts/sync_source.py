@@ -50,6 +50,8 @@ EXCLUDED_PATHS = {
 REQUIRED_FILES = {
     'AGENTS.md', 'README.md', 'pubspec.yaml', 'pubspec.lock', 'lib/main.dart',
     'native/go.mod', 'native/go.sum', 'native/bridge/main.go',
+    'native/core/provider_registry.go', 'native/cmd/provider_manifest/main.go',
+    'lib/source_registry.g.dart', 'scripts/generate_sources.py',
     'android/app/build.gradle.kts', 'android/gradle/wrapper/gradle-wrapper.properties',
     'windows/CMakeLists.txt', 'windows/flutter/CMakeLists.txt',
     '.github/workflows/build.yml', 'scripts/build_native.py',

@@ -48,7 +48,7 @@ func (d *Downloader) huangjuClient() *huangjuAPIClient {
 	d.huangjuOnce.Do(func() {
 		d.huangju = &huangjuAPIClient{
 			downloader: d,
-			base:       strings.TrimRight(firstNonEmpty(d.cfg.HuangjuAPIURL, huangjuAPIBaseURL), "/"),
+			base:       strings.TrimRight(firstNonEmpty(d.cfg.ProviderURLs[sourceHuangju+":api"], huangjuAPIBaseURL), "/"),
 			site:       d.providerBaseURL(sourceHuangju),
 		}
 	})

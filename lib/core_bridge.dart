@@ -124,7 +124,8 @@ abstract class AppRepository {
   }) async => throw AppFailure('当前环境不支持站源管理');
   Future<SourceStatus> cancelSourceJob(String source) async =>
       throw AppFailure('当前环境不支持站源管理');
-  Future<List<String>> suggestions(String query) async => const [];
+  Future<List<String>> suggestions(String source, String query) async =>
+      const [];
   Future<Map<String, dynamic>> storage() async => {};
   Future<String> downloadDirectory() async =>
       (await storage())['directory'] as String? ?? '';
@@ -355,11 +356,7 @@ class NativeRepository extends AppRepository {
 
   @override
   Future<Drama?> supplementMetadata(Drama drama) async {
-    if (!(drama.source == 'hongguo' && drama.onlineDate.isEmpty ||
-        drama.source == 'huangdou' &&
-            (drama.heat.isEmpty || drama.vipStatus == null))) {
-      return null;
-    }
+    if (!SourceSite.byId(drama.source).needsExtraMetadata(drama)) return null;
     final result = await _read('metadata', {
       'action': 'metadata',
       'drama': drama.toJson(),
@@ -451,10 +448,11 @@ class NativeRepository extends AppRepository {
   }
 
   @override
-  Future<List<String>> suggestions(String query) async {
-    _authorize('hongguo');
+  Future<List<String>> suggestions(String source, String query) async {
+    _authorize(source);
     final result = await _read('suggestions', {
       'action': 'suggestions',
+      'source': source,
       'query': query,
     });
     return (result['items'] as List? ?? []).whereType<String>().toList();
@@ -525,7 +523,6 @@ class NativeRepository extends AppRepository {
       }
       if (action == 'recommendations' ||
           action == 'cachedRecommendations' ||
-          action == 'suggestions' ||
           action == 'danmaku') {
         _authorize('hongguo');
       }
@@ -536,6 +533,7 @@ class NativeRepository extends AppRepository {
         'sourceStatus',
         'sourceJob',
         'cancelSourceJob',
+        'suggestions',
       }.contains(action)) {
         _authorize(input['source'] as String);
       }
@@ -638,6 +636,9 @@ class NativeRepository extends AppRepository {
     });
     if (build['allSources'] != allSourcesEnabled) {
       throw AppFailure('应用与原生核心的站源版本不一致，请使用完整安装包重新安装');
+    }
+    if (!SourceSite.matchesManifest(build)) {
+      throw AppFailure('应用与原生核心的站源配置不一致，请使用完整安装包重新安装');
     }
     if (!background) await BackgroundDownloads.prepare();
     if (!background) {

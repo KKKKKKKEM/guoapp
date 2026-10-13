@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from app_build import BuildVariant, add_variant_argument
+from generate_sources import generate_sources
 
 root = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
@@ -29,6 +30,8 @@ if bootstrap_env['GOSUMDB'] == 'off':
 toolchain_root = subprocess.check_output([go, 'env', 'GOROOT'], cwd=root / 'native',
     env=bootstrap_env, text=True).strip()
 go = str(Path(toolchain_root) / 'bin' / ('go.exe' if platform.system() == 'Windows' else 'go'))
+
+generate_sources(root, go=go, environment=bootstrap_env)
 
 def build(goos, architecture, compiler, output, extra=None):
     output.parent.mkdir(parents=True, exist_ok=True)

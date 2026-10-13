@@ -7,8 +7,8 @@ var buildAllSources = "false"
 var errNativeBuildSource = errors.New("当前版本不包含此站源")
 
 func nativeSourceAvailable(source string) bool {
-	source = canonicalProviderSource(source)
-	return source == sourceHongguo || buildAllSources == "true" && isHuangguoProviderSource(source)
+	provider, found := findProvider(source)
+	return found && (provider.Definition().Default || buildAllSources == "true")
 }
 
 func nativeDramaAvailable(drama nativeDrama) bool {
@@ -37,7 +37,7 @@ func nativeDownloadAvailable(job nativeDownloadJob) bool {
 
 func nativeAuthorizeInput(input nativeInput) error {
 	switch input.Action {
-	case "recommendations", "cachedRecommendations", "suggestions", "danmaku":
+	case "recommendations", "cachedRecommendations", "danmaku":
 		if !nativeSourceAvailable(sourceHongguo) {
 			return errNativeBuildSource
 		}
@@ -46,7 +46,7 @@ func nativeAuthorizeInput(input nativeInput) error {
 		if !found || !nativeSourceAvailable(board.Source) {
 			return errNativeBuildSource
 		}
-	case "catalog", "cached", "categories", "sourceStatus", "sourceJob", "cancelSourceJob":
+	case "catalog", "cached", "categories", "sourceStatus", "sourceJob", "cancelSourceJob", "suggestions":
 		if !nativeSourceAvailable(input.Source) {
 			return errNativeBuildSource
 		}

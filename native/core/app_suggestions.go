@@ -8,16 +8,19 @@ import (
 	"unicode/utf8"
 )
 
-func (engine *nativeEngine) suggestions(ctx context.Context, query string) ([]string, error) {
+func (engine *nativeEngine) suggestions(ctx context.Context, source, query string) ([]string, error) {
+	provider, found := findProvider(source)
+	if !found {
+		return nil, errNativeBuildSource
+	}
+	suggestions, supported := provider.(ProviderSuggestions)
+	if !supported {
+		return nil, errors.New("当前站源不支持搜索联想")
+	}
 	if strings.TrimSpace(query) == "" {
 		return []string{}, nil
 	}
-	items, err := engine.downloader.hongguoSearchSuggestions(ctx, query)
-	names := make([]string, 0, len(items))
-	for _, item := range items {
-		names = append(names, item.Name)
-	}
-	return names, err
+	return suggestions.Suggestions(ctx, engine.downloader, query)
 }
 
 func nativeParseSuggestions(body []byte) ([]string, error) {

@@ -7,7 +7,6 @@ import (
 	"html"
 	"net/url"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -33,59 +32,29 @@ func nativeCatalogKey(source, category string) string {
 }
 
 func validNativeCategory(source, category string) bool {
+	provider, found := findProvider(source)
+	if !found {
+		return false
+	}
 	if category == "" {
 		return true
 	}
 	if len(category) > 128 || strings.ContainsAny(category, "|/\\\x00\r\n") {
 		return false
 	}
-	switch source {
-	case sourceHongguo:
-		for _, genre := range hongguoAppGenres {
-			if category == genre.key {
-				return true
-			}
-		}
-	case sourceHuangguoAI:
-		for _, entry := range nativeAICategories {
-			if category == entry.ID {
-				return true
-			}
-		}
-	case sourceHuangguoVideo:
-		id, err := strconv.Atoi(category)
-		return err == nil && id > 0
-	case sourceCloudFront:
-		return strings.TrimSpace(category) == category
-	case sourceHuangju:
-		return category == huangjuNewestCategory || validHuangjuID(category) && !strings.HasPrefix(category, "@")
-	case sourceYeguo:
-		return validYeguoCategory(category)
-	case sourceDSD:
-		return webProviderNumericID.MatchString(category)
-	case sourceSorani:
-		return validSoraniCategory(category)
-	case sourceGuipian:
-		return validGuipianCategory(category)
-	case sourceHanxiaoquan:
-		return validHanxiaoquanCategory(category)
-	}
-	return false
+	return provider.ValidCategory(category)
 }
 
 func (engine *nativeEngine) nativeCategories(ctx context.Context, source string, force bool) ([]nativeCategory, error) {
 	source = canonicalProviderSource(source)
+	provider, found := findProvider(source)
+	if !found {
+		return nil, errors.New("请选择有效站源")
+	}
 	all := []nativeCategory{{Name: "全部"}}
-	switch source {
-	case sourceHongguo:
-		for _, genre := range hongguoAppGenres {
-			all = append(all, nativeCategory{ID: genre.key, Name: genre.name})
-		}
-		return all, nil
-	case sourceHuangguoAI:
-		return append(all, nativeAICategories...), nil
-	case sourceHuangdou:
-		return all, nil
+	if provider.Definition().StaticCategories {
+		categories, err := provider.Categories(ctx, engine.downloader, force)
+		return append(all, categories...), err
 	}
 	engine.mu.Lock()
 	cached := append([]nativeCategory{}, engine.categoryOptions[source]...)
@@ -93,54 +62,11 @@ func (engine *nativeEngine) nativeCategories(ctx context.Context, source string,
 	if len(cached) > 1 && !force {
 		return cached, nil
 	}
-	d := engine.downloader
-	var err error
-	switch source {
-	case sourceCloudFront:
-		var tabs legacyTabList
-		err = d.fetchAPI(ctx, "/api/app/playlet-tab/all", nil, &tabs)
-		for _, tab := range tabs {
-			if validNativeCategory(source, tab.ID) && tab.ID != "" && tab.Name != "" {
-				all = append(all, nativeCategory{ID: tab.ID, Name: tab.Name})
-			}
-		}
-	case sourceHuangguoVideo:
-		address := d.providerBaseURL(source) + "/videos"
-		var body string
-		body, err = d.fetchProviderText(ctx, address, d.providerBaseURL(source)+"/")
-		if err == nil {
-			all = append(all, parseHuangguoVideoCategories(body)...)
-		}
-	case sourceHuangju:
-		var categories []nativeCategory
-		categories, err = d.fetchHuangjuCategories(ctx)
-		if err == nil {
-			all = append(all, categories...)
-		}
-	case sourceYeguo:
-		var categories []nativeCategory
-		categories, err = d.fetchYeguoCategories(ctx)
-		if err == nil {
-			all = append(all, categories...)
-		}
-	case sourceDSD:
-		var categories []nativeCategory
-		categories, err = d.fetchDSDCategories(ctx, force)
-		if err == nil {
-			all = append(all, categories...)
-		}
-	case sourceSorani:
-		all = append(all, d.fetchSoraniCategories()...)
-	case sourceGuipian:
-		all = append(all, d.fetchGuipianCategories()...)
-	case sourceHanxiaoquan:
-		all = append(all, d.fetchHanxiaoquanCategories()...)
-	default:
-		return nil, errors.New("请选择有效站源")
-	}
+	categories, err := provider.Categories(ctx, engine.downloader, force)
 	if err != nil {
 		return nil, err
 	}
+	all = append(all, categories...)
 	if len(all) == 1 {
 		return nil, errors.New("站源暂未返回内容分类，请稍后重试")
 	}

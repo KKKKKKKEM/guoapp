@@ -20,18 +20,6 @@ import (
 )
 
 const (
-	sourceHuangguoAI    = "huangguoai"
-	sourceHuangguoVideo = "huangguo-video"
-	sourceHuangdou      = "huangdou"
-	sourceHongguo       = "hongguo"
-	sourceHuangju       = "huangju"
-	sourceYeguo         = "yeguo"
-	sourceDSD           = "dsd"
-	sourceCloudFront    = "cloudfront"
-	sourceSorani        = "sorani"
-	sourceGuipian       = "guipian"
-	sourceHanxiaoquan   = "hanxiaoquan"
-
 	providerMaxBodyBytes = 20 * 1024 * 1024
 	providerTimeout      = 12 * time.Second
 )
@@ -70,61 +58,6 @@ type providerEpisode struct {
 	URL   string
 	Index int
 	HLS   string
-}
-
-func providerDramaID(source, sourceID string) string {
-	return source + ":" + strings.TrimSpace(sourceID)
-}
-
-func providerChapterID(source, sourceID, chapterKey string) string {
-	return source + ":" + strings.TrimSpace(sourceID) + ":" + strings.TrimSpace(chapterKey)
-}
-
-func splitProviderDramaID(id string) (source, sourceID string, ok bool) {
-	source, sourceID, ok = strings.Cut(strings.TrimSpace(id), ":")
-	source = canonicalProviderSource(source)
-	if !ok || strings.TrimSpace(sourceID) == "" || !isHuangguoProviderSource(source) {
-		return "", "", false
-	}
-	return source, strings.TrimSpace(sourceID), true
-}
-
-func isHuangguoProviderSource(source string) bool {
-	switch canonicalProviderSource(source) {
-	case sourceHuangguoAI, sourceHuangguoVideo, sourceHuangdou, sourceHongguo, sourceHuangju, sourceYeguo, sourceDSD, sourceCloudFront, sourceSorani, sourceGuipian, sourceHanxiaoquan:
-		return true
-	default:
-		return false
-	}
-}
-
-func canonicalProviderSource(source string) string {
-	switch strings.ToLower(strings.TrimSpace(source)) {
-	case "huangguo", "huangguoai", "huangguoai.com":
-		return sourceHuangguoAI
-	case "huangguo-video", "huangguo.video":
-		return sourceHuangguoVideo
-	case "huangdou", "tideember.cc", "xqjurgek.top":
-		return sourceHuangdou
-	case "hongguo", "hongguoduanju.com":
-		return sourceHongguo
-	case "huangju", "huangju.net", "api.huangju.net":
-		return sourceHuangju
-	case "yeguo", "ygdj7.com", "www.ygdj7.com", "analyze.buxefaex.cc", "delta.ygrwdsgt.cc", "yeguodj.com", "www.yeguodj.com":
-		return sourceYeguo
-	case "dsd", "dsd.com.se", "www.dsd.com.se":
-		return sourceDSD
-	case "cloudfront":
-		return sourceCloudFront
-	case "sorani", "sorani.net", "www.sorani.net", "api.sorani.cc", "sorani.cc":
-		return sourceSorani
-	case "guipian", "guipianwu.com", "www.guipianwu.com":
-		return sourceGuipian
-	case "hanxiaoquan", "jennyhow.com", "www.jennyhow.com":
-		return sourceHanxiaoquan
-	default:
-		return strings.TrimSpace(source)
-	}
 }
 
 func mergeDramaMetadata(base, extra Drama) Drama {
@@ -212,46 +145,6 @@ func valueEmpty(v any) bool {
 	return s == "" || s == "0" || s == "<nil>"
 }
 
-func (d *Downloader) GetHuangguoChapters(ctx context.Context, source, sourceID string) (string, []Chapter, error) {
-	switch canonicalProviderSource(source) {
-	case sourceHuangguoAI:
-		return d.fetchHuangguoAIChapters(ctx, sourceID)
-	case sourceHuangguoVideo:
-		return d.fetchHuangguoVideoChapters(ctx, sourceID)
-	case sourceHuangdou:
-		return d.fetchHuangdouChapters(ctx, sourceID)
-	case sourceHongguo:
-		return d.fetchHongguoChapters(ctx, sourceID)
-	case sourceHuangju:
-		drama, chapters, err := d.fetchHuangjuDetail(ctx, sourceID)
-		return drama.DisplayTitle(), chapters, err
-	case sourceYeguo:
-		drama, chapters, err := d.fetchYeguoDetail(ctx, sourceID)
-		return drama.DisplayTitle(), chapters, err
-	case sourceDSD:
-		drama, chapters, err := d.fetchDSDDetail(ctx, sourceID)
-		return drama.DisplayTitle(), chapters, err
-	case sourceSorani:
-		drama, chapters, err := d.fetchSoraniDetail(ctx, sourceID)
-		return drama.DisplayTitle(), chapters, err
-	case sourceGuipian:
-		drama, chapters, err := d.fetchGuipianDetail(ctx, sourceID)
-		return drama.DisplayTitle(), chapters, err
-	case sourceHanxiaoquan:
-		drama, chapters, err := d.fetchHanxiaoquanDetail(ctx, sourceID)
-		return drama.DisplayTitle(), chapters, err
-	case sourceCloudFront:
-		return d.fetchLegacyChapters(ctx, sourceID)
-	default:
-		return "", nil, fmt.Errorf("unsupported provider source: %s", source)
-	}
-}
-
-func (d *Downloader) fetchHuangguoAIChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
-	drama, chapters, err := d.fetchHuangguoAIDetail(ctx, sourceID)
-	return drama.DisplayTitle(), chapters, err
-}
-
 func (d *Downloader) fetchHuangguoAIDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {
 	sourceID = strings.Trim(strings.TrimSpace(sourceID), "/")
 	sourceID = strings.TrimPrefix(sourceID, "detail/")
@@ -293,11 +186,6 @@ func (d *Downloader) fetchHuangguoAIDetail(ctx context.Context, sourceID string)
 	}
 	sortProviderChapters(chapters)
 	return drama, uniqueChapters(chapters), nil
-}
-
-func (d *Downloader) fetchHuangguoVideoChapters(ctx context.Context, sourceID string) (string, []Chapter, error) {
-	drama, chapters, err := d.fetchHuangguoVideoDetail(ctx, sourceID)
-	return drama.DisplayTitle(), chapters, err
 }
 
 func (d *Downloader) fetchHuangguoVideoDetail(ctx context.Context, sourceID string) (Drama, []Chapter, error) {

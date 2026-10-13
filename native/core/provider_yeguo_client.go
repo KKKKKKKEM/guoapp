@@ -423,7 +423,7 @@ func (client *yeguoAPIClient) discoverConfigurationAt(ctx context.Context, site 
 	if err != nil {
 		return nil, err
 	}
-	apiBase, err := yeguoAPIBase(document, d.cfg.YeguoAPIURL)
+	apiBase, err := yeguoAPIBase(document, d.cfg.ProviderURLs[sourceYeguo+":api"])
 	if err != nil {
 		return nil, err
 	}
