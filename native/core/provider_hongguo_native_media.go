@@ -135,7 +135,7 @@ func hongguoMediaAddresses(info map[string]any) []string {
 			}
 		}
 	}
-	for _, key := range []string{"main_url", "backup_url", "backup_url_1", "backup_url_2", "backup_urls", "url_list"} {
+	for _, key := range []string{"main_url", "backup_url", "backup_url_1", "backup_url_2", "backup_urls", "url_list", "contentUrl"} {
 		add(info[key])
 	}
 	return addresses

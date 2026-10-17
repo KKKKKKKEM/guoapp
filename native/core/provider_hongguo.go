@@ -16,6 +16,8 @@ import (
 
 const hongguoBaseURL = "https://hongguoduanju.com"
 
+const hongguoQuickAppBaseURL = "https://novelquickapp.com"
+
 func (d *Downloader) fetchHongguoDramas(ctx context.Context) ([]Drama, error) {
 	initialized := hongguoCatalogInitialized(d.hongguoCatalogSnapshot())
 	dramas, appErr := d.fetchHongguoAppCatalog(ctx)
@@ -220,6 +222,61 @@ func (d *Downloader) resolveHongguoMedia(ctx context.Context, task Task) (provid
 }
 
 func (d *Downloader) resolveHongguoWebMedia(ctx context.Context, seriesID, videoID string) (providerMedia, error) {
+	media, quickAppErr := d.resolveHongguoQuickAppMedia(ctx, seriesID, videoID)
+	if quickAppErr == nil {
+		return media, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return providerMedia{}, err
+	}
+	media, pageErr := d.resolveHongguoPlayerPageMedia(ctx, seriesID, videoID)
+	if pageErr == nil {
+		return media, nil
+	}
+	return providerMedia{}, errors.Join(quickAppErr, pageErr)
+}
+
+func (d *Downloader) resolveHongguoQuickAppMedia(ctx context.Context, seriesID, videoID string) (providerMedia, error) {
+	pageURL := hongguoQuickAppBaseURL + "/player/" + url.PathEscape(seriesID) + "/" + url.PathEscape(videoID)
+	body, err := d.fetchProviderText(ctx, pageURL, hongguoQuickAppBaseURL+"/")
+	if err != nil {
+		return providerMedia{}, err
+	}
+	page := routerLoaderMap(parseRouterData(body), "player_", "player_page")
+	if mapString(page, "vid") != videoID || mapString(page, "series_id") != seriesID {
+		return providerMedia{}, errors.New("红果公开页未返回所请求的剧集")
+	}
+	addresses := hongguoPublicMediaAddresses(body, videoID)
+	if len(addresses) == 0 {
+		return providerMedia{}, errors.New("红果该集未提供公开直链")
+	}
+	seo, _ := page["publicVideoSeo"].(map[string]any)
+	duration, _ := strconv.ParseFloat(mapString(seo, "durationSeconds"), 64)
+	media := providerMedia{URL: addresses[0], Referer: d.providerBaseURL(sourceHongguo) + "/", Duration: time.Duration(duration * float64(time.Second))}
+	for _, address := range addresses {
+		variant := media
+		variant.URL, variant.Variants = address, nil
+		media.Variants = append(media.Variants, variant)
+	}
+	return media, nil
+}
+
+func hongguoPublicMediaAddresses(body, videoID string) []string {
+	pattern := regexp.MustCompile(`(?:"contentUrl"\s*:\s*"(?:https?://hongguoduanju\.com)?|<(?:video|a)\b[^>]+(?:src|href)=")(/video/public/` + regexp.QuoteMeta(videoID) + `/[^" <]+\.mp4)"`)
+	matches := pattern.FindAllStringSubmatch(body, -1)
+	seen := map[string]bool{}
+	var addresses []string
+	for _, match := range matches {
+		address := hongguoBaseURL + match[1]
+		if !seen[address] {
+			seen[address] = true
+			addresses = append(addresses, address)
+		}
+	}
+	return addresses
+}
+
+func (d *Downloader) resolveHongguoPlayerPageMedia(ctx context.Context, seriesID, videoID string) (providerMedia, error) {
 	pageURL := hongguoBaseURL + "/player/" + url.PathEscape(seriesID) + "/" + url.PathEscape(videoID)
 	body, err := d.fetchProviderText(ctx, pageURL, hongguoBaseURL+"/")
 	if err != nil {
